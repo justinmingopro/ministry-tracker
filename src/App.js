@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from './supabaseClient';
 import {
   Search, Plus, ChevronLeft, BookOpen, MapPin, Phone,
-  User, Calendar, Tag, Edit2, Trash2, X, Check, Sun, Moon,
+  User, Calendar, Tag, Edit2, Trash2, X, Sun, Moon,
   Filter, ChevronDown, AlertCircle
 } from 'lucide-react';
 import './App.css';
