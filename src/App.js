@@ -323,8 +323,279 @@ function ContactCard({ contact, onClick }) {
   );
 }
 
+function StudyLogForm({ entry, onSave, onClose }) {
+  const [form, setForm] = useState({
+    log_date: entry?.log_date || new Date().toISOString().split('T')[0],
+    scripture_ref: entry?.scripture_ref || '',
+    topic: entry?.topic || '',
+    notes: entry?.notes || '',
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const pushToCalendar = async (savedEntry) => {
+    try {
+      const resp = await fetch('/api/calendar-push', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: savedEntry.calendar_event_id ? 'update' : 'create',
+          eventId: savedEntry.calendar_event_id,
+          event: {
+            summary: savedEntry.topic || savedEntry.scripture_ref || 'Study',
+            description: [savedEntry.scripture_ref, savedEntry.notes].filter(Boolean).join('\n\n'),
+            date: savedEntry.log_date,
+          },
+        }),
+      });
+      const calData = await resp.json();
+      if (calData.eventId && calData.eventId !== savedEntry.calendar_event_id) {
+        await supabase.from('study_log').update({ calendar_event_id: calData.eventId }).eq('id', savedEntry.id);
+        savedEntry.calendar_event_id = calData.eventId;
+      }
+    } catch (calErr) {
+      console.warn('Calendar push failed:', calErr);
+    }
+  };
+
+  const handleSubmit = async e => {
+    e.preventDefault();
+    setSaving(true);
+    setError('');
+    try {
+      let data, err;
+      if (entry?.id) {
+        ({ data, error: err } = await supabase.from('study_log').update(form).eq('id', entry.id).select().single());
+      } else {
+        ({ data, error: err } = await supabase.from('study_log').insert(form).select().single());
+      }
+      if (err) throw err;
+      await pushToCalendar(data);
+      onSave(data);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="form">
+      {error && <div className="error-msg"><AlertCircle size={14} /> {error}</div>}
+      <div className="form-row">
+        <label>Date</label>
+        <input type="date" value={form.log_date} onChange={e => setForm(f => ({ ...f, log_date: e.target.value }))} />
+      </div>
+      <div className="form-row">
+        <label>Scripture</label>
+        <input value={form.scripture_ref} onChange={e => setForm(f => ({ ...f, scripture_ref: e.target.value }))} placeholder="e.g. Acts 17:26, 27" />
+      </div>
+      <div className="form-row">
+        <label>Topic</label>
+        <input value={form.topic} onChange={e => setForm(f => ({ ...f, topic: e.target.value }))} placeholder="e.g. Weekly Bible reading" />
+      </div>
+      <div className="form-row">
+        <label>Notes</label>
+        <textarea value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} rows={4} placeholder="What stood out? Any thoughts to follow up on?" />
+      </div>
+      <div className="form-actions">
+        <button type="button" className="btn-secondary" onClick={onClose}>Cancel</button>
+        <button type="submit" className="btn-primary" disabled={saving}>{saving ? 'Saving...' : entry ? 'Save Changes' : 'Log Study'}</button>
+      </div>
+    </form>
+  );
+}
+
+function StudyLogCard({ entry, onEdit, onDelete }) {
+  const date = new Date(entry.log_date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' });
+  return (
+    <div className="visit-card">
+      <div className="visit-header">
+        <span className="visit-date"><Calendar size={13} /> {date}</span>
+        <div className="visit-actions">
+          <button className="icon-btn small" onClick={() => onEdit(entry)}><Edit2 size={13} /></button>
+          <button className="icon-btn small danger" onClick={() => onDelete(entry)}><Trash2 size={13} /></button>
+        </div>
+      </div>
+      {entry.scripture_ref && <div className="visit-field"><BookOpen size={13} /> <span><strong>Scripture:</strong> {entry.scripture_ref}</span></div>}
+      {entry.topic && <div className="visit-field"><Tag size={13} /> <span><strong>Topic:</strong> {entry.topic}</span></div>}
+      {entry.notes && <div className="visit-notes">{entry.notes}</div>}
+    </div>
+  );
+}
+
+function StudyLogView() {
+  const [entries, setEntries] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showForm, setShowForm] = useState(false);
+  const [editingEntry, setEditingEntry] = useState(null);
+  const [confirmDelete, setConfirmDelete] = useState(null);
+
+  const loadEntries = useCallback(async () => {
+    setLoading(true);
+    const { data } = await supabase.from('study_log').select('*').order('log_date', { ascending: false });
+    setEntries(data || []);
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { loadEntries(); }, [loadEntries]);
+
+  const handleSave = (entry) => {
+    setEntries(prev => {
+      const idx = prev.findIndex(e => e.id === entry.id);
+      if (idx >= 0) { const next = [...prev]; next[idx] = entry; return next; }
+      return [entry, ...prev].sort((a, b) => b.log_date.localeCompare(a.log_date));
+    });
+    setShowForm(false);
+    setEditingEntry(null);
+  };
+
+  const handleDelete = async (entry) => {
+    if (entry.calendar_event_id) {
+      try {
+        await fetch('/api/calendar-push', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'delete', eventId: entry.calendar_event_id }),
+        });
+      } catch (calErr) {
+        console.warn('Calendar delete failed:', calErr);
+      }
+    }
+    await supabase.from('study_log').delete().eq('id', entry.id);
+    setEntries(prev => prev.filter(e => e.id !== entry.id));
+    setConfirmDelete(null);
+  };
+
+  return (
+    <div className="detail-view">
+      <div className="visits-header">
+        <h2>Study Log <span className="count-badge">{entries.length}</span></h2>
+        <button className="btn-primary small" onClick={() => setShowForm(true)}><Plus size={14} /> Log Study</button>
+      </div>
+
+      {loading ? <div className="loading">Loading study log...</div> :
+        entries.length === 0 ? (
+          <div className="empty-visits">
+            <BookOpen size={32} />
+            <p>No study entries logged yet.</p>
+            <button className="btn-primary" onClick={() => setShowForm(true)}>Log First Entry</button>
+          </div>
+        ) : (
+          <div className="visits-list">
+            {entries.map(e => (
+              <StudyLogCard key={e.id} entry={e}
+                onEdit={entry => { setEditingEntry(entry); setShowForm(true); }}
+                onDelete={entry => setConfirmDelete(entry)} />
+            ))}
+          </div>
+        )
+      }
+
+      {showForm && (
+        <Modal title={editingEntry ? 'Edit Study Entry' : 'Log Study'} onClose={() => { setShowForm(false); setEditingEntry(null); }}>
+          <StudyLogForm entry={editingEntry} onSave={handleSave} onClose={() => { setShowForm(false); setEditingEntry(null); }} />
+        </Modal>
+      )}
+
+      {confirmDelete && (
+        <Modal title="Confirm Delete" onClose={() => setConfirmDelete(null)}>
+          <div className="form">
+            <p style={{ marginBottom: 16 }}>Delete this study entry? This cannot be undone.</p>
+            <div className="form-actions">
+              <button className="btn-secondary" onClick={() => setConfirmDelete(null)}>Cancel</button>
+              <button className="btn-danger" onClick={() => handleDelete(confirmDelete)}>Delete</button>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+function StudyNoteCard({ note }) {
+  return (
+    <div className="visit-card">
+      <div className="visit-header">
+        <span className="visit-date"><BookOpen size={13} /> {note.scripture_ref || note.publication_ref || 'Note'}</span>
+      </div>
+      {note.title && <div className="visit-field"><strong>{note.title}</strong></div>}
+      <div className="visit-notes">{note.content}</div>
+      {note.tags?.length > 0 && (
+        <div className="note-tags">
+          {note.tags.map(t => <span key={t} className="note-tag">{t}</span>)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StudyNotesView() {
+  const [notes, setNotes] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
+  const [tagFilter, setTagFilter] = useState('all');
+  const [tags, setTags] = useState([]);
+
+  const loadNotes = useCallback(async () => {
+    setLoading(true);
+    const { data } = await supabase.from('study_notes').select('*').order('note_created_at', { ascending: false });
+    if (data) {
+      setNotes(data);
+      setTags([...new Set(data.flatMap(n => n.tags || []))].sort());
+    }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { loadNotes(); }, [loadNotes]);
+
+  const filtered = notes.filter(n => {
+    const q = search.toLowerCase();
+    const matchSearch = !search ||
+      n.content?.toLowerCase().includes(q) ||
+      n.scripture_ref?.toLowerCase().includes(q) ||
+      n.title?.toLowerCase().includes(q);
+    const matchTag = tagFilter === 'all' || (n.tags || []).includes(tagFilter);
+    return matchSearch && matchTag;
+  });
+
+  return (
+    <>
+      <div className="filters-bar">
+        <div className="search-wrap">
+          <Search size={16} className="search-icon" />
+          <input className="search-input" placeholder="Search notes, scriptures..." value={search} onChange={e => setSearch(e.target.value)} />
+          {search && <button className="icon-btn small" onClick={() => setSearch('')}><X size={14} /></button>}
+        </div>
+        {tags.length > 0 && (
+          <select className="filter-select" value={tagFilter} onChange={e => setTagFilter(e.target.value)}>
+            <option value="all">All Tags</option>
+            {tags.map(t => <option key={t} value={t}>{t}</option>)}
+          </select>
+        )}
+      </div>
+      <main className="contacts-list">
+        {loading ? (
+          <div className="loading">Loading notes...</div>
+        ) : filtered.length === 0 ? (
+          <div className="empty-state">
+            <BookOpen size={48} />
+            <h3>{notes.length === 0 ? 'No notes imported yet' : 'No results found'}</h3>
+            <p>{notes.length === 0 ? 'Import your JW Library notes to see them here.' : 'Try a different search or tag.'}</p>
+          </div>
+        ) : (
+          <div className="visits-list">
+            {filtered.map(n => <StudyNoteCard key={n.id} note={n} />)}
+          </div>
+        )}
+      </main>
+    </>
+  );
+}
+
 export default function App() {
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem('darkMode') !== 'false');
+  const [tab, setTab] = useState('contacts');
   const [contacts, setContacts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -412,50 +683,65 @@ export default function App() {
           <button className="icon-btn" onClick={() => setDarkMode(d => !d)}>
             {darkMode ? <Sun size={18} /> : <Moon size={18} />}
           </button>
-          <button className="btn-primary" onClick={() => setShowAddContact(true)}>
-            <Plus size={16} /> Add Contact
-          </button>
+          {tab === 'contacts' && (
+            <button className="btn-primary" onClick={() => setShowAddContact(true)}>
+              <Plus size={16} /> Add Contact
+            </button>
+          )}
         </div>
       </header>
 
-      <div className="filters-bar">
-        <div className="search-wrap">
-          <Search size={16} className="search-icon" />
-          <input className="search-input" placeholder="Search by name or address..." value={search} onChange={e => setSearch(e.target.value)} />
-          {search && <button className="icon-btn small" onClick={() => setSearch('')}><X size={14} /></button>}
-        </div>
-        <select className="filter-select" value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
-          <option value="all">All Statuses</option>
-          {Object.entries(STATUS_CONFIG).map(([val, cfg]) => <option key={val} value={val}>{cfg.label}</option>)}
-        </select>
-        {territories.length > 0 && (
-          <select className="filter-select" value={territoryFilter} onChange={e => setTerritoryFilter(e.target.value)}>
-            <option value="all">All Territories</option>
-            {territories.map(t => <option key={t} value={t}>{t}</option>)}
-          </select>
-        )}
+      <div className="tabs-bar">
+        <button className={`tab-btn ${tab === 'contacts' ? 'active' : ''}`} onClick={() => setTab('contacts')}>Contacts</button>
+        <button className={`tab-btn ${tab === 'studyLog' ? 'active' : ''}`} onClick={() => setTab('studyLog')}>Study Log</button>
+        <button className={`tab-btn ${tab === 'studyNotes' ? 'active' : ''}`} onClick={() => setTab('studyNotes')}>Study Notes</button>
       </div>
 
-      <main className="contacts-list">
-        {loading ? (
-          <div className="loading">Loading contacts...</div>
-        ) : filtered.length === 0 ? (
-          <div className="empty-state">
-            <User size={48} />
-            <h3>{contacts.length === 0 ? 'No contacts yet' : 'No results found'}</h3>
-            <p>{contacts.length === 0 ? 'Add your first return visit contact to get started.' : 'Try adjusting your search or filters.'}</p>
-            {contacts.length === 0 && <button className="btn-primary" onClick={() => setShowAddContact(true)}><Plus size={16} /> Add First Contact</button>}
+      {tab === 'contacts' && (
+        <>
+          <div className="filters-bar">
+            <div className="search-wrap">
+              <Search size={16} className="search-icon" />
+              <input className="search-input" placeholder="Search by name or address..." value={search} onChange={e => setSearch(e.target.value)} />
+              {search && <button className="icon-btn small" onClick={() => setSearch('')}><X size={14} /></button>}
+            </div>
+            <select className="filter-select" value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
+              <option value="all">All Statuses</option>
+              {Object.entries(STATUS_CONFIG).map(([val, cfg]) => <option key={val} value={val}>{cfg.label}</option>)}
+            </select>
+            {territories.length > 0 && (
+              <select className="filter-select" value={territoryFilter} onChange={e => setTerritoryFilter(e.target.value)}>
+                <option value="all">All Territories</option>
+                {territories.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+            )}
           </div>
-        ) : (
-          filtered.map(c => <ContactCard key={c.id} contact={c} onClick={setSelectedContact} />)
-        )}
-      </main>
 
-      {showAddContact && (
-        <Modal title="Add New Contact" onClose={() => setShowAddContact(false)}>
-          <ContactForm onSave={handleContactSave} onClose={() => setShowAddContact(false)} />
-        </Modal>
+          <main className="contacts-list">
+            {loading ? (
+              <div className="loading">Loading contacts...</div>
+            ) : filtered.length === 0 ? (
+              <div className="empty-state">
+                <User size={48} />
+                <h3>{contacts.length === 0 ? 'No contacts yet' : 'No results found'}</h3>
+                <p>{contacts.length === 0 ? 'Add your first return visit contact to get started.' : 'Try adjusting your search or filters.'}</p>
+                {contacts.length === 0 && <button className="btn-primary" onClick={() => setShowAddContact(true)}><Plus size={16} /> Add First Contact</button>}
+              </div>
+            ) : (
+              filtered.map(c => <ContactCard key={c.id} contact={c} onClick={setSelectedContact} />)
+            )}
+          </main>
+
+          {showAddContact && (
+            <Modal title="Add New Contact" onClose={() => setShowAddContact(false)}>
+              <ContactForm onSave={handleContactSave} onClose={() => setShowAddContact(false)} />
+            </Modal>
+          )}
+        </>
       )}
+
+      {tab === 'studyLog' && <StudyLogView />}
+      {tab === 'studyNotes' && <StudyNotesView />}
     </div>
   );
 }
