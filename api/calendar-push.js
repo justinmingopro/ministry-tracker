@@ -1,91 +1,114 @@
-// Creates/updates/deletes events on the "JW/Ministry" Google Calendar for study_log entries.
-// Reuses the OAuth refresh-token pattern from the project-manager repo's calendar-availability.js.
-export default async function handler(req, res) {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-  if (req.method === "OPTIONS") return res.status(200).end();
-  if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+// Creates/updates/deletes events on the "JW/Ministry" iCloud calendar for study_log
+// entries, via CalDAV (Apple's calendars don't have a REST API like Google's).
+import { DAVClient } from 'tsdav';
 
-  const clientId     = process.env.GCAL_CLIENT_ID;
-  const clientSecret = process.env.GCAL_CLIENT_SECRET;
-  const refreshToken = process.env.GCAL_REFRESH_TOKEN;
-  const calendarId   = process.env.GCAL_STUDY_CALENDAR_ID;
+async function getClientAndCalendar() {
+  const username = process.env.ICLOUD_APPLE_ID;
+  const password = process.env.ICLOUD_APP_SPECIFIC_PASSWORD;
+  const calendarName = process.env.ICLOUD_STUDY_CALENDAR_NAME || 'JW/Ministry';
 
-  if (!clientId || !clientSecret || !refreshToken || !calendarId) {
-    return res.status(500).json({
-      error: "Google Calendar not configured — add GCAL_CLIENT_ID, GCAL_CLIENT_SECRET, GCAL_REFRESH_TOKEN, GCAL_STUDY_CALENDAR_ID to Vercel env vars.",
-    });
+  if (!username || !password) {
+    throw new Error(
+      "iCloud calendar not configured — add ICLOUD_APPLE_ID and ICLOUD_APP_SPECIFIC_PASSWORD to Vercel env vars."
+    );
   }
+
+  const client = new DAVClient({
+    serverUrl: 'https://caldav.icloud.com',
+    credentials: { username, password },
+    authMethod: 'Basic',
+    defaultAccountType: 'caldav',
+  });
+  await client.login();
+
+  const calendars = await client.fetchCalendars();
+  const calendar = calendars.find((c) => c.displayName === calendarName);
+  if (!calendar) {
+    const names = calendars.map((c) => c.displayName).join(', ');
+    throw new Error(`Calendar "${calendarName}" not found. Calendars on this account: ${names}`);
+  }
+  return { client, calendar };
+}
+
+function escapeIcsText(s) {
+  return (s || '').replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\n/g, '\\n');
+}
+
+function addDays(dateStr, days) {
+  const d = new Date(`${dateStr}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+function buildIcs({ uid, summary, description, date }) {
+  const dtStart = date.replace(/-/g, '');
+  const dtEnd = addDays(date, 1).replace(/-/g, '');
+  const dtStamp = new Date().toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
+  return [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//ministry-tracker//study-log//EN',
+    'BEGIN:VEVENT',
+    `UID:${uid}`,
+    `DTSTAMP:${dtStamp}`,
+    `DTSTART;VALUE=DATE:${dtStart}`,
+    `DTEND;VALUE=DATE:${dtEnd}`,
+    `SUMMARY:${escapeIcsText(summary)}`,
+    description ? `DESCRIPTION:${escapeIcsText(description)}` : null,
+    'END:VEVENT',
+    'END:VCALENDAR',
+  ]
+    .filter(Boolean)
+    .join('\r\n');
+}
+
+export default async function handler(req, res) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') return res.status(200).end();
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   const { action, eventId, event } = req.body || {};
-  if (!action || !["create", "update", "delete"].includes(action)) {
+  if (!action || !['create', 'update', 'delete'].includes(action)) {
     return res.status(400).json({ error: "action must be 'create', 'update', or 'delete'" });
   }
-  if (action !== "create" && !eventId) {
-    return res.status(400).json({ error: "eventId is required for update/delete" });
+  if (action !== 'create' && !eventId) {
+    return res.status(400).json({ error: 'eventId is required for update/delete' });
   }
 
   try {
-    // ── 1. Exchange refresh token for access token ──────────────────────────
-    const tokenResp = await fetch("https://oauth2.googleapis.com/token", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        client_id:     clientId,
-        client_secret: clientSecret,
-        refresh_token: refreshToken,
-        grant_type:    "refresh_token",
-      }),
-    });
-    const tokenData = await tokenResp.json();
-    if (!tokenData.access_token) {
-      const reason = tokenData.error_description || tokenData.error || JSON.stringify(tokenData);
-      return res.status(500).json({ error: `Token refresh failed: ${reason}` });
-    }
+    const { client, calendar } = await getClientAndCalendar();
 
-    const authHeader = { Authorization: `Bearer ${tokenData.access_token}` };
-    const base = `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`;
-
-    // ── 2. Create / update / delete the event ───────────────────────────────
-    if (action === "delete") {
-      const delResp = await fetch(`${base}/${encodeURIComponent(eventId)}`, {
-        method: "DELETE",
-        headers: authHeader,
-      });
-      // Google returns 410 if the event was already deleted on the calendar side — treat as success.
-      if (!delResp.ok && delResp.status !== 410 && delResp.status !== 404) {
-        const detail = await delResp.json().catch(() => ({}));
-        return res.status(500).json({ error: "Calendar API error", detail });
+    if (action === 'delete') {
+      const url = `${calendar.url}${eventId}.ics`;
+      const resp = await client.deleteCalendarObject({ calendarObject: { url } });
+      // Already gone is fine — treat like the Google version did.
+      if (!resp.ok && resp.status !== 404 && resp.status !== 410) {
+        return res.status(500).json({ error: `CalDAV delete failed (${resp.status})` });
       }
       return res.status(200).json({ ok: true });
     }
 
     if (!event || !event.summary || !event.date) {
-      return res.status(400).json({ error: "event.summary and event.date are required" });
+      return res.status(400).json({ error: 'event.summary and event.date are required' });
     }
 
-    const body = {
-      summary: event.summary,
-      description: event.description || undefined,
-      start: { date: event.date },
-      end: { date: event.date },
-    };
+    const uid =
+      action === 'create' ? `study-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` : eventId;
+    const iCalString = buildIcs({ uid, summary: event.summary, description: event.description, date: event.date });
+    const url = `${calendar.url}${uid}.ics`;
 
-    const url = action === "create" ? base : `${base}/${encodeURIComponent(eventId)}`;
-    const method = action === "create" ? "POST" : "PATCH";
+    const resp =
+      action === 'create'
+        ? await client.createCalendarObject({ calendar, iCalString, filename: `${uid}.ics` })
+        : await client.updateCalendarObject({ calendarObject: { url, data: iCalString } });
 
-    const evResp = await fetch(url, {
-      method,
-      headers: { ...authHeader, "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    const evData = await evResp.json();
-    if (!evResp.ok) {
-      return res.status(500).json({ error: "Calendar API error", detail: evData });
+    if (!resp.ok) {
+      return res.status(500).json({ error: `CalDAV ${action} failed (${resp.status})` });
     }
 
-    return res.status(200).json({ eventId: evData.id });
+    return res.status(200).json({ eventId: uid });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
