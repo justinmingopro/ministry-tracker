@@ -93,6 +93,13 @@ body {
 .tab-btn:hover { color: var(--text); }
 .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
 
+.scripture-link {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.scripture-link:hover { text-decoration: underline; }
+
 /* Note tags */
 .note-tags {
   display: flex;
