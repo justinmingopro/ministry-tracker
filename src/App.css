@@ -93,6 +93,17 @@ body {
 .tab-btn:hover { color: var(--text); }
 .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
 
+.source-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 9px;
+  border-radius: 20px;
+  letter-spacing: 0.3px;
+}
+
+.source-badge.jw { color: #7c6af0; background: rgba(124,106,240,0.15); }
+.source-badge.bear { color: #f0a95c; background: rgba(240,169,92,0.15); }
+
 .scripture-link {
   color: var(--accent);
   text-decoration: none;

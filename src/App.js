@@ -628,6 +628,121 @@ function StudyNotesView() {
   );
 }
 
+function SourceBadge({ source }) {
+  return source === 'bear'
+    ? <span className="source-badge bear">Bear</span>
+    : <span className="source-badge jw">JW Library</span>;
+}
+
+function SearchResultCard({ result }) {
+  const isBear = result.source === 'bear';
+  const refs = isBear
+    ? (result.scripture_refs || [])
+    : (result.scripture_ref
+        ? [{ ref: result.scripture_ref, book: result.scripture_book, chapter: result.scripture_chapter, verse_start: result.scripture_verse_start }]
+        : []);
+  const snippet = result.content?.length > 400 ? result.content.slice(0, 400) + '…' : result.content;
+
+  return (
+    <div className="visit-card">
+      <div className="visit-header">
+        <SourceBadge source={result.source} />
+      </div>
+      {result.title && <div className="visit-field"><strong>{result.title}</strong></div>}
+      {refs.length > 0 && (
+        <div className="note-tags" style={{ marginBottom: 8 }}>
+          {refs.map((r, i) => {
+            const url = buildWolUrl(r.book, r.chapter, r.verse_start);
+            return url ? (
+              <a key={i} href={url} target="_blank" rel="noopener noreferrer" className="scripture-link note-tag">{r.ref}</a>
+            ) : (
+              <span key={i} className="note-tag">{r.ref}</span>
+            );
+          })}
+        </div>
+      )}
+      <div className="visit-notes">{snippet}</div>
+      {result.tags?.length > 0 && (
+        <div className="note-tags">
+          {result.tags.map(t => <span key={t} className="note-tag">{t}</span>)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SearchView() {
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  const runSearch = async (e) => {
+    e?.preventDefault();
+    const q = query.trim();
+    if (!q) { setResults(null); return; }
+    setLoading(true);
+    const [studyRes, bearRes] = await Promise.all([
+      supabase.from('study_notes').select('*')
+        .or(`title.ilike.%${q}%,content.ilike.%${q}%,scripture_ref.ilike.%${q}%,publication_ref.ilike.%${q}%`)
+        .limit(50),
+      supabase.from('bear_notes').select('*')
+        .or(`title.ilike.%${q}%,content.ilike.%${q}%`)
+        .limit(50),
+    ]);
+    const combined = [
+      ...(studyRes.data || []).map(n => ({ ...n, source: 'jw' })),
+      ...(bearRes.data || []).map(n => ({ ...n, source: 'bear' })),
+    ].sort((a, b) => new Date(b.note_modified_at || b.note_created_at || 0) - new Date(a.note_modified_at || a.note_created_at || 0));
+    setResults(combined);
+    setLoading(false);
+  };
+
+  return (
+    <>
+      <div className="filters-bar">
+        <form onSubmit={runSearch} className="search-wrap" style={{ flex: 1 }}>
+          <Search size={16} className="search-icon" />
+          <input
+            className="search-input"
+            placeholder="Search JW Library and Bear notes..."
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+          />
+          {query && (
+            <button type="button" className="icon-btn small" onClick={() => { setQuery(''); setResults(null); }}>
+              <X size={14} />
+            </button>
+          )}
+        </form>
+      </div>
+      <main className="contacts-list">
+        {loading ? (
+          <div className="loading">Searching...</div>
+        ) : results === null ? (
+          <div className="empty-state">
+            <Search size={48} />
+            <h3>Search everything</h3>
+            <p>Search across your JW Library notes and Bear talk notes together.</p>
+          </div>
+        ) : results.length === 0 ? (
+          <div className="empty-state">
+            <Search size={48} />
+            <h3>No results</h3>
+            <p>Try a different search term.</p>
+          </div>
+        ) : (
+          <div className="visits-list">
+            <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 4 }}>
+              {results.length} result{results.length !== 1 ? 's' : ''}
+            </p>
+            {results.map(r => <SearchResultCard key={`${r.source}-${r.id}`} result={r} />)}
+          </div>
+        )}
+      </main>
+    </>
+  );
+}
+
 export default function App() {
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem('darkMode') !== 'false');
   const [tab, setTab] = useState('contacts');
@@ -730,6 +845,7 @@ export default function App() {
         <button className={`tab-btn ${tab === 'contacts' ? 'active' : ''}`} onClick={() => setTab('contacts')}>Contacts</button>
         <button className={`tab-btn ${tab === 'studyLog' ? 'active' : ''}`} onClick={() => setTab('studyLog')}>Study Log</button>
         <button className={`tab-btn ${tab === 'studyNotes' ? 'active' : ''}`} onClick={() => setTab('studyNotes')}>Study Notes</button>
+        <button className={`tab-btn ${tab === 'search' ? 'active' : ''}`} onClick={() => setTab('search')}>Search</button>
       </div>
 
       {tab === 'contacts' && (
@@ -777,6 +893,7 @@ export default function App() {
 
       {tab === 'studyLog' && <StudyLogView />}
       {tab === 'studyNotes' && <StudyNotesView />}
+      {tab === 'search' && <SearchView />}
     </div>
   );
 }
