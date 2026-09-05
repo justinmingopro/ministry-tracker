@@ -2,7 +2,7 @@
 -- Run this in your Supabase SQL Editor
 
 -- Contacts table (people you've contacted)
-CREATE TABLE contacts (
+CREATE TABLE IF NOT EXISTS contacts (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   name TEXT NOT NULL,
   address TEXT,
@@ -15,7 +15,7 @@ CREATE TABLE contacts (
 );
 
 -- Visits table (individual visits per contact)
-CREATE TABLE visits (
+CREATE TABLE IF NOT EXISTS visits (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   contact_id UUID REFERENCES contacts(id) ON DELETE CASCADE,
   visit_date DATE NOT NULL DEFAULT CURRENT_DATE,
@@ -26,9 +26,9 @@ CREATE TABLE visits (
 );
 
 -- Index for faster queries
-CREATE INDEX visits_contact_id_idx ON visits(contact_id);
-CREATE INDEX contacts_status_idx ON contacts(status);
-CREATE INDEX contacts_territory_idx ON contacts(territory);
+CREATE INDEX IF NOT EXISTS visits_contact_id_idx ON visits(contact_id);
+CREATE INDEX IF NOT EXISTS contacts_status_idx ON contacts(status);
+CREATE INDEX IF NOT EXISTS contacts_territory_idx ON contacts(territory);
 
 -- Auto-update updated_at on contacts
 CREATE OR REPLACE FUNCTION update_updated_at_column()
@@ -39,6 +39,7 @@ BEGIN
 END;
 $$ language 'plpgsql';
 
+DROP TRIGGER IF EXISTS update_contacts_updated_at ON contacts;
 CREATE TRIGGER update_contacts_updated_at
   BEFORE UPDATE ON contacts
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
