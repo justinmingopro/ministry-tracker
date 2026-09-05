@@ -165,7 +165,7 @@ def load_env():
     for fname in (".env.local", ".env"):
         path = Path(__file__).resolve().parent.parent / fname
         if path.exists():
-            for line in path.read_text().splitlines():
+            for line in path.read_text(encoding="utf-8").splitlines():
                 line = line.strip()
                 if not line or line.startswith("#") or "=" not in line:
                     continue
@@ -362,9 +362,9 @@ def main():
     if len(args) != 2:
         sys.exit(__doc__)
 
-    with open(args[0]) as f:
+    with open(args[0], encoding="utf-8") as f:
         visits_board = json.load(f)
-    with open(args[1]) as f:
+    with open(args[1], encoding="utf-8") as f:
         study_board = json.load(f)
 
     contacts = parse_return_visits(visits_board)
