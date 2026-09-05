@@ -3,7 +3,7 @@
 
 -- Notes imported from Bear (convention/assembly/talk notes), read-only mirror.
 -- Populated by an iOS Shortcut hitting /api/bear-import, not by JW Library.
-CREATE TABLE bear_notes (
+CREATE TABLE IF NOT EXISTS bear_notes (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   bear_note_id TEXT UNIQUE NOT NULL,   -- Bear's own note identifier, so re-imports upsert
   title TEXT,
@@ -16,10 +16,11 @@ CREATE TABLE bear_notes (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX bear_notes_scripture_refs_idx ON bear_notes USING GIN(scripture_refs);
-CREATE INDEX bear_notes_tags_idx ON bear_notes USING GIN(tags);
-CREATE INDEX bear_notes_content_idx ON bear_notes USING GIN(to_tsvector('english', content));
+CREATE INDEX IF NOT EXISTS bear_notes_scripture_refs_idx ON bear_notes USING GIN(scripture_refs);
+CREATE INDEX IF NOT EXISTS bear_notes_tags_idx ON bear_notes USING GIN(tags);
+CREATE INDEX IF NOT EXISTS bear_notes_content_idx ON bear_notes USING GIN(to_tsvector('english', content));
 
+DROP TRIGGER IF EXISTS update_bear_notes_updated_at ON bear_notes;
 CREATE TRIGGER update_bear_notes_updated_at
   BEFORE UPDATE ON bear_notes
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
