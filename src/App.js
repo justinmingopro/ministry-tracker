@@ -3,7 +3,7 @@ import { supabase } from './supabaseClient';
 import {
   Search, Plus, ChevronLeft, BookOpen, MapPin, Phone,
   User, Calendar, Tag, Edit2, Trash2, X, Sun, Moon,
-  Filter, ChevronDown, AlertCircle
+  Filter, ChevronDown, AlertCircle, Download
 } from 'lucide-react';
 import './App.css';
 
@@ -323,7 +323,7 @@ function ContactCard({ contact, onClick }) {
   );
 }
 
-function StudyLogForm({ entry, onSave, onClose }) {
+function StudyLogForm({ entry, onSave, onClose, onDelete }) {
   const [form, setForm] = useState({
     log_date: entry?.log_date || new Date().toISOString().split('T')[0],
     scripture_ref: entry?.scripture_ref || '',
@@ -399,6 +399,11 @@ function StudyLogForm({ entry, onSave, onClose }) {
         <textarea value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} rows={4} placeholder="What stood out? Any thoughts to follow up on?" />
       </div>
       <div className="form-actions">
+        {entry && onDelete && (
+          <button type="button" className="btn-danger" style={{ marginRight: 'auto' }} onClick={() => onDelete(entry)}>
+            <Trash2 size={14} />
+          </button>
+        )}
         <button type="button" className="btn-secondary" onClick={onClose}>Cancel</button>
         <button type="submit" className="btn-primary" disabled={saving}>{saving ? 'Saving...' : entry ? 'Save Changes' : 'Log Study'}</button>
       </div>
@@ -406,21 +411,36 @@ function StudyLogForm({ entry, onSave, onClose }) {
   );
 }
 
-function StudyLogCard({ entry, onEdit, onDelete }) {
-  const date = new Date(entry.log_date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' });
+const MONTH_NAMES = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
+
+function groupStudyEntriesByMonth(entries) {
+  const groups = {};
+  for (const e of entries) {
+    const [year, month] = e.log_date.split('-');
+    const key = `${year}-${month}`;
+    if (!groups[key]) groups[key] = { key, year: Number(year), month: Number(month), entries: [] };
+    groups[key].entries.push(e);
+  }
+  return Object.values(groups)
+    .sort((a, b) => a.key.localeCompare(b.key))
+    .map(g => ({ ...g, entries: [...g.entries].sort((a, b) => a.log_date.localeCompare(b.log_date)) }));
+}
+
+function StudyLogBoardCard({ entry, onClick }) {
+  const day = Number(entry.log_date.split('-')[2]);
+  const label = entry.scripture_ref || entry.topic || 'Untitled';
   return (
-    <div className="visit-card">
-      <div className="visit-header">
-        <span className="visit-date"><Calendar size={13} /> {date}</span>
-        <div className="visit-actions">
-          <button className="icon-btn small" onClick={() => onEdit(entry)}><Edit2 size={13} /></button>
-          <button className="icon-btn small danger" onClick={() => onDelete(entry)}><Trash2 size={13} /></button>
-        </div>
-      </div>
-      {entry.scripture_ref && <div className="visit-field"><BookOpen size={13} /> <span><strong>Scripture:</strong> {entry.scripture_ref}</span></div>}
-      {entry.topic && <div className="visit-field"><Tag size={13} /> <span><strong>Topic:</strong> {entry.topic}</span></div>}
-      {entry.notes && <div className="visit-notes">{entry.notes}</div>}
-    </div>
+    <button
+      type="button"
+      className={`study-card ${entry.scripture_ref ? 'has-scripture' : ''}`}
+      onClick={onClick}
+    >
+      <span className="study-card-day">{day}</span>
+      <span className="study-card-text">{label}</span>
+    </button>
   );
 }
 
@@ -467,6 +487,8 @@ function StudyLogView() {
     setConfirmDelete(null);
   };
 
+  const monthGroups = groupStudyEntriesByMonth(entries);
+
   return (
     <div className="detail-view">
       <div className="visits-header">
@@ -482,11 +504,20 @@ function StudyLogView() {
             <button className="btn-primary" onClick={() => setShowForm(true)}>Log First Entry</button>
           </div>
         ) : (
-          <div className="visits-list">
-            {entries.map(e => (
-              <StudyLogCard key={e.id} entry={e}
-                onEdit={entry => { setEditingEntry(entry); setShowForm(true); }}
-                onDelete={entry => setConfirmDelete(entry)} />
+          <div className="study-board">
+            {monthGroups.map(g => (
+              <div key={g.key} className="study-board-column">
+                <div className="study-board-column-header">
+                  <span>{MONTH_NAMES[g.month - 1]} {g.year}</span>
+                  <span className="count-badge">{g.entries.length}</span>
+                </div>
+                <div className="study-board-cards">
+                  {g.entries.map(e => (
+                    <StudyLogBoardCard key={e.id} entry={e}
+                      onClick={() => { setEditingEntry(e); setShowForm(true); }} />
+                  ))}
+                </div>
+              </div>
             ))}
           </div>
         )
@@ -494,7 +525,9 @@ function StudyLogView() {
 
       {showForm && (
         <Modal title={editingEntry ? 'Edit Study Entry' : 'Log Study'} onClose={() => { setShowForm(false); setEditingEntry(null); }}>
-          <StudyLogForm entry={editingEntry} onSave={handleSave} onClose={() => { setShowForm(false); setEditingEntry(null); }} />
+          <StudyLogForm entry={editingEntry} onSave={handleSave}
+            onClose={() => { setShowForm(false); setEditingEntry(null); }}
+            onDelete={entry => { setShowForm(false); setEditingEntry(null); setConfirmDelete(entry); }} />
         </Modal>
       )}
 
@@ -761,6 +794,39 @@ export default function App() {
   const [territories, setTerritories] = useState([]);
   const [selectedContact, setSelectedContact] = useState(null);
   const [showAddContact, setShowAddContact] = useState(false);
+  const [exporting, setExporting] = useState(false);
+
+  const handleExportBackup = async () => {
+    setExporting(true);
+    try {
+      const [contactsRes, visitsRes, studyLogRes, studyNotesRes, bearNotesRes] = await Promise.all([
+        supabase.from('contacts').select('*'),
+        supabase.from('visits').select('*'),
+        supabase.from('study_log').select('*'),
+        supabase.from('study_notes').select('*'),
+        supabase.from('bear_notes').select('*'),
+      ]);
+      const backup = {
+        exported_at: new Date().toISOString(),
+        contacts: contactsRes.data || [],
+        visits: visitsRes.data || [],
+        study_log: studyLogRes.data || [],
+        study_notes: studyNotesRes.data || [],
+        bear_notes: bearNotesRes.data || [],
+      };
+      const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `ministry-tracker-backup-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } finally {
+      setExporting(false);
+    }
+  };
 
   useEffect(() => {
     document.body.className = darkMode ? 'dark' : 'light';
@@ -837,6 +903,9 @@ export default function App() {
           </div>
         </div>
         <div className="header-right">
+          <button className="icon-btn" onClick={handleExportBackup} disabled={exporting} title="Download a backup of all data as JSON">
+            <Download size={18} />
+          </button>
           <button className="icon-btn" onClick={() => setDarkMode(d => !d)}>
             {darkMode ? <Sun size={18} /> : <Moon size={18} />}
           </button>
