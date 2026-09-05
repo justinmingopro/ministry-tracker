@@ -80,6 +80,41 @@ python scripts/import_jwlibrary.py [path-to-backup.jwlibrary]
   existing rows instead of duplicating them. Notes deleted in JW Library are **not**
   deleted here — this is a one-way archive, not a live mirror.
 
+## Importing from Trello (one-time migration)
+
+`scripts/import_trello.py` is a one-time migration for people moving off two Trello
+boards used before this app existed:
+
+- A **return visits** board where each list is one contact and each card in it is a
+  visit (or an "Address"/"Phone" metadata card) — imported into `contacts` + `visits`.
+- A **personal study** board where each list is a month and each card is one day's
+  study entry (e.g. `"12: Isa 24:1,2"` or `"8: Meeting prep"`) — imported into
+  `study_log`. Bare chapter:verse entries with no book name are assumed to continue
+  whichever book was most recently named, since that's how a running Bible-reading
+  log is normally kept.
+
+Unlike the JW Library/Bear imports, this isn't an ongoing sync — run it once per
+board. First run `supabase-schema-trello.sql` in the Supabase SQL editor (adds a
+`trello_list_id`/`trello_card_id` column to `contacts`/`visits`/`study_log` so a
+re-run upserts instead of duplicating, same pattern as the other import tables).
+
+Getting the export: open the board → menu (`...`) → **Print, export, and share** →
+**Export as JSON**. If that opens a blank/blocked tab, visit the board's URL with
+`.json` appended instead (e.g. `https://trello.com/b/AbCd1234/board-name.json`) —
+either way, save the resulting raw JSON text as a `.json` file.
+
+```
+python scripts/import_trello.py return-visits.json personal-study.json          # dry run — prints a preview, writes nothing
+python scripts/import_trello.py return-visits.json personal-study.json --commit # actually imports
+```
+
+Always review the dry-run preview first. In particular: archived (closed) Trello
+lists are imported as contacts with status `moved`, since Trello doesn't record why
+a list was archived — correct these individually in the Contacts tab afterward if
+some were actually "not interested" or "do not call" instead. Historical study log
+entries are **not** pushed to your iCloud calendar (unlike new entries logged
+through the app), to avoid retroactively flooding it with hundreds of events.
+
 ## Importing Bear notes
 
 Bear's notes database only lives on-device — there's no API and nothing this app can
