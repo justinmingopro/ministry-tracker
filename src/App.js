@@ -635,13 +635,15 @@ function SourceBadge({ source }) {
 }
 
 function SearchResultCard({ result }) {
+  const [expanded, setExpanded] = useState(false);
   const isBear = result.source === 'bear';
   const refs = isBear
     ? (result.scripture_refs || [])
     : (result.scripture_ref
         ? [{ ref: result.scripture_ref, book: result.scripture_book, chapter: result.scripture_chapter, verse_start: result.scripture_verse_start }]
         : []);
-  const snippet = result.content?.length > 400 ? result.content.slice(0, 400) + '…' : result.content;
+  const isLong = result.content?.length > 400;
+  const snippet = expanded || !isLong ? result.content : result.content.slice(0, 400) + '…';
 
   return (
     <div className="visit-card">
@@ -661,7 +663,12 @@ function SearchResultCard({ result }) {
           })}
         </div>
       )}
-      <div className="visit-notes">{snippet}</div>
+      <div className="visit-notes" style={{ whiteSpace: 'pre-wrap' }}>{snippet}</div>
+      {isLong && (
+        <button type="button" className="show-more-btn" onClick={() => setExpanded(e => !e)}>
+          {expanded ? 'Show less' : 'Show more'}
+        </button>
+      )}
       {result.tags?.length > 0 && (
         <div className="note-tags">
           {result.tags.map(t => <span key={t} className="note-tag">{t}</span>)}

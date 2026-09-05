@@ -104,6 +104,18 @@ body {
 .source-badge.jw { color: #7c6af0; background: rgba(124,106,240,0.15); }
 .source-badge.bear { color: #f0a95c; background: rgba(240,169,92,0.15); }
 
+.show-more-btn {
+  background: none;
+  border: none;
+  padding: 6px 0 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.show-more-btn:hover { text-decoration: underline; }
+
 .scripture-link {
   color: var(--accent);
   text-decoration: none;
