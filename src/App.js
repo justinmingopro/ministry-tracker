@@ -711,10 +711,81 @@ function SearchResultCard({ result }) {
   );
 }
 
+function AddBearNoteForm({ onSave, onClose }) {
+  const [title, setTitle] = useState('');
+  const [content, setContent] = useState('');
+  const [tags, setTags] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleSubmit = async e => {
+    e.preventDefault();
+    if (!content.trim()) { setError('Paste the note content first'); return; }
+    setSaving(true);
+    setError('');
+    try {
+      const firstLine = content.trim().split('\n')[0].replace(/^#+\s*/, '').trim();
+      const finalTitle = title.trim() || firstLine || 'Untitled';
+      const parsedTags = tags.trim()
+        ? tags.split(',').map(t => t.trim()).filter(Boolean)
+        : [...new Set((content.match(/#[\w-]+/g) || []).map(t => t.slice(1)))];
+      const id = 'manual-' + Math.abs(
+        Array.from(finalTitle.toLowerCase()).reduce((h, c) => (h * 31 + c.charCodeAt(0)) | 0, 0)
+      ).toString(36);
+
+      const resp = await fetch('/api/bear-import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          notes: [{
+            id,
+            title: finalTitle,
+            content: content.trim(),
+            tags: parsedTags,
+            created: new Date().toISOString(),
+            modified: new Date().toISOString(),
+          }],
+        }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || 'Import failed');
+      onSave();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="form">
+      {error && <div className="error-msg"><AlertCircle size={14} /> {error}</div>}
+      <div className="form-row">
+        <label>Title (optional — uses the note's first line if left blank)</label>
+        <input value={title} onChange={e => setTitle(e.target.value)} placeholder="e.g. Circuit Overseer visit talk" />
+      </div>
+      <div className="form-row">
+        <label>Note content</label>
+        <textarea value={content} onChange={e => setContent(e.target.value)} rows={10}
+          placeholder={'Open the note in Bear, select all the text, copy, and paste it here.\n\nIf you highlighted scriptures in Bear, they’ll already be wrapped like ==Rev 21:3,4== when pasted — those get auto-detected and linked.'} />
+      </div>
+      <div className="form-row">
+        <label>Tags (optional, comma-separated — auto-detected from #hashtags in the note if left blank)</label>
+        <input value={tags} onChange={e => setTags(e.target.value)} placeholder="e.g. talk, convention" />
+      </div>
+      <div className="form-actions">
+        <button type="button" className="btn-secondary" onClick={onClose}>Cancel</button>
+        <button type="submit" className="btn-primary" disabled={saving}>{saving ? 'Saving...' : 'Save Note'}</button>
+      </div>
+    </form>
+  );
+}
+
 function SearchView() {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [showAddNote, setShowAddNote] = useState(false);
 
   const runSearch = async (e) => {
     e?.preventDefault();
@@ -754,6 +825,7 @@ function SearchView() {
             </button>
           )}
         </form>
+        <button className="btn-primary small" onClick={() => setShowAddNote(true)}><Plus size={14} /> Add Note</button>
       </div>
       <main className="contacts-list">
         {loading ? (
@@ -779,6 +851,15 @@ function SearchView() {
           </div>
         )}
       </main>
+
+      {showAddNote && (
+        <Modal title="Add Bear Note" onClose={() => setShowAddNote(false)}>
+          <AddBearNoteForm
+            onSave={() => { setShowAddNote(false); if (query.trim()) runSearch(); }}
+            onClose={() => setShowAddNote(false)}
+          />
+        </Modal>
+      )}
     </>
   );
 }

@@ -118,45 +118,34 @@ through the app), to avoid retroactively flooding it with hundreds of events.
 ## Importing Bear notes
 
 Bear's notes database only lives on-device — there's no API and nothing this app can
-poll from a server. Instead, an **iOS Shortcut** run on your phone/iPad reads your
-Bear notes and POSTs them to `/api/bear-import`, which upserts them into `bear_notes`
-and parses out any scripture references it finds inside `==highlighted==` text.
+poll from a server. Two ways to get a note in, both landing in the same `bear_notes`
+table and both read-only (nothing is ever written back to Bear):
 
-### Setting up the Shortcut
+### Paste it in (recommended for occasional notes)
 
-1. Open the **Shortcuts** app → **+** to create a new shortcut.
-2. Add the **Find Notes** action (from the Bear app's Shortcuts actions) to get the
-   notes you want to import — e.g. filtered by a tag like `#talk` or `#convention`.
-   (If you don't tag talk notes yet, tag the ones you want archived here — the
-   Shortcut only needs to import what you point it at, not your whole Bear database.)
-3. Add a **Repeat with Each** action over those notes, and inside it build a
-   dictionary per note with:
-   - `id` — the note's unique identifier (use **Get Details of Notes** → *Unique
-     Identifier*)
-   - `title` — the note's title
-   - `content` — the note's text (plain text, not HTML — Bear's `==highlight==`
-     markdown syntax needs to survive for scripture parsing to work)
-   - `tags` — the note's tags, as a list
-   - `created` / `modified` — the note's creation/modification dates, as ISO 8601
-     strings (**Format Date** action, using the *ISO 8601* format)
-4. Add each dictionary to a list (**Add to Variable**), outside the Repeat loop.
-5. After the loop, use **Get Contents of URL**:
-   - URL: `https://<your-deployed-app>/api/bear-import`
-   - Method: `POST`
-   - Headers: `Content-Type: application/json`, and if you set `BEAR_IMPORT_TOKEN`,
-     `Authorization: Bearer <your-token>`
-   - Request Body: JSON, with a single key `notes` set to the list built above —
-     i.e. `{ "notes": [ {...}, {...} ] }`
-6. Run the Shortcut. On success it returns `{ "imported": <count>,
-   "scriptureRefsFound": <count> }`.
+The **Search** tab has an **Add Note** button. Open your note in Bear, select all
+the text and copy it (Bear's editor is plain text with Markdown formatting, so a
+plain copy already includes the raw `==highlight==` markup around anything you
+highlighted), paste it into the box, and save. The title defaults to the note's
+first line if left blank, and tags default to any `#hashtags` found in the text.
+Scripture references wrapped in `==...==` (i.e. anything you highlighted in Bear)
+are auto-detected and linked. Good for the "a few notes every few months" case —
+no setup required.
 
-Re-running the Shortcut is safe — notes are upserted on Bear's own note `id`, so
-re-imports update existing rows instead of duplicating them. This is read-only:
-nothing is ever written back to Bear.
+### iOS Shortcut (for frequent notes)
 
-**Tip:** add the Shortcut to an Automation (e.g. "when Bear is closed" or a daily
-time-of-day trigger) so your talk notes stay in sync without having to remember to
-run it manually.
+If you add Bear notes often enough that pasting each one in gets tedious, a
+Shortcut can automate it: search Bear notes by tag, pull their title/content/tags/
+dates, and POST them as a batch to `/api/bear-import`:
+```json
+{ "notes": [ { "id": "...", "title": "...", "content": "...", "tags": [...], "created": "...", "modified": "..." } ] }
+```
+`content` needs to be the plain Markdown text (not HTML) for `==highlight==`
+scripture detection to work, and `id` should be something stable (Bear's own note
+identifier) so re-running the Shortcut upserts instead of duplicating. Bear's exact
+action names vary by version (look for something like "Search Notes" and "Get
+Contents of Bear Notes") — ask Claude to help you build this against your specific
+version if you want to set it up.
 
 ## Calendar sync
 
