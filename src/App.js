@@ -1,9 +1,9 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from './supabaseClient';
 import {
   Search, Plus, ChevronLeft, BookOpen, MapPin, Phone,
   User, Calendar, Tag, Edit2, Trash2, X, Sun, Moon,
-  Filter, ChevronDown, AlertCircle, Download
+  Filter, ChevronDown, AlertCircle, Download, Upload
 } from 'lucide-react';
 import './App.css';
 
@@ -711,6 +711,71 @@ function SearchResultCard({ result }) {
   );
 }
 
+function bearNoteIdFromTitle(title) {
+  const hash = Array.from(title.toLowerCase()).reduce((h, c) => (h * 31 + c.charCodeAt(0)) | 0, 0);
+  return 'manual-' + Math.abs(hash).toString(36);
+}
+
+function parseHashtags(text) {
+  return [...new Set((text.match(/#[\w-]+/g) || []).map(t => t.slice(1)))];
+}
+
+async function postBearNotes(notes) {
+  const resp = await fetch('/api/bear-import', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ notes }),
+  });
+  const data = await resp.json();
+  if (!resp.ok) throw new Error(data.error || 'Import failed');
+  return data;
+}
+
+function BearBulkUploadButton({ onDone }) {
+  const inputRef = useRef(null);
+  const [uploading, setUploading] = useState(false);
+  const [result, setResult] = useState(null);
+
+  const handleFiles = async (e) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+    setUploading(true);
+    setResult(null);
+    try {
+      const notes = await Promise.all(files.map(async (file) => {
+        const text = (await file.text()).trim();
+        const title = file.name.replace(/\.(md|markdown|txt)$/i, '');
+        return {
+          id: bearNoteIdFromTitle(title),
+          title,
+          content: text,
+          tags: parseHashtags(text),
+          created: new Date(file.lastModified || Date.now()).toISOString(),
+          modified: new Date(file.lastModified || Date.now()).toISOString(),
+        };
+      }));
+      const data = await postBearNotes(notes);
+      setResult(`Imported ${data.imported} note${data.imported !== 1 ? 's' : ''} (${data.scriptureRefsFound} scripture reference${data.scriptureRefsFound !== 1 ? 's' : ''} found)`);
+      onDone?.();
+    } catch (err) {
+      setResult('Error: ' + err.message);
+    } finally {
+      setUploading(false);
+      if (inputRef.current) inputRef.current.value = '';
+    }
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
+      <input ref={inputRef} type="file" accept=".md,.markdown,.txt" multiple style={{ display: 'none' }} onChange={handleFiles} />
+      <button className="btn-secondary small" onClick={() => inputRef.current?.click()} disabled={uploading}>
+        <Upload size={14} /> {uploading ? 'Uploading...' : 'Upload Files'}
+      </button>
+      {result && <p style={{ fontSize: 11, color: 'var(--text-muted)', maxWidth: 220, textAlign: 'right' }}>{result}</p>}
+    </div>
+  );
+}
+
 function AddBearNoteForm({ onSave, onClose }) {
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
@@ -728,27 +793,16 @@ function AddBearNoteForm({ onSave, onClose }) {
       const finalTitle = title.trim() || firstLine || 'Untitled';
       const parsedTags = tags.trim()
         ? tags.split(',').map(t => t.trim()).filter(Boolean)
-        : [...new Set((content.match(/#[\w-]+/g) || []).map(t => t.slice(1)))];
-      const id = 'manual-' + Math.abs(
-        Array.from(finalTitle.toLowerCase()).reduce((h, c) => (h * 31 + c.charCodeAt(0)) | 0, 0)
-      ).toString(36);
+        : parseHashtags(content);
 
-      const resp = await fetch('/api/bear-import', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          notes: [{
-            id,
-            title: finalTitle,
-            content: content.trim(),
-            tags: parsedTags,
-            created: new Date().toISOString(),
-            modified: new Date().toISOString(),
-          }],
-        }),
-      });
-      const data = await resp.json();
-      if (!resp.ok) throw new Error(data.error || 'Import failed');
+      await postBearNotes([{
+        id: bearNoteIdFromTitle(finalTitle),
+        title: finalTitle,
+        content: content.trim(),
+        tags: parsedTags,
+        created: new Date().toISOString(),
+        modified: new Date().toISOString(),
+      }]);
       onSave();
     } catch (err) {
       setError(err.message);
@@ -825,6 +879,7 @@ function SearchView() {
             </button>
           )}
         </form>
+        <BearBulkUploadButton onDone={() => { if (query.trim()) runSearch(); }} />
         <button className="btn-primary small" onClick={() => setShowAddNote(true)}><Plus size={14} /> Add Note</button>
       </div>
       <main className="contacts-list">
