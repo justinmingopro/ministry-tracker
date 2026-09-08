@@ -3,7 +3,7 @@ import { supabase } from './supabaseClient';
 import {
   Search, Plus, ChevronLeft, BookOpen, MapPin, Phone,
   User, Calendar, Tag, Edit2, Trash2, X, Sun, Moon,
-  Filter, ChevronDown, AlertCircle, Download, Upload
+  Filter, ChevronDown, AlertCircle, Download, Upload, Sparkles
 } from 'lucide-react';
 import './App.css';
 
@@ -835,8 +835,138 @@ function AddBearNoteForm({ onSave, onClose }) {
   );
 }
 
+function formatAnswer(text) {
+  const urlRegex = /(https?:\/\/wol\.jw\.org[^\s)]+)/g;
+  const linked = text.replace(urlRegex, (url) => {
+    const label = url.replace('https://wol.jw.org', 'wol.jw.org/…').slice(0, 60);
+    return `<a href="${url}" target="_blank" rel="noopener noreferrer">${label}</a>`;
+  });
+  return linked
+    .split(/\n\n+/)
+    .filter((p) => p.trim())
+    .map((p) => `<p>${p.replace(/\n/g, ' ').trim()}</p>`)
+    .join('');
+}
+
+async function callResearchAPI(question, thread) {
+  const res = await fetch('/api/search', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      question,
+      thread: thread.map((t) => ({ q: t.q, a: t.rawA })),
+    }),
+  });
+
+  // The server streams blank-line heartbeats to keep the connection alive
+  // during long searches, then writes one JSON line as the real payload.
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let data = null;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop();
+    for (const line of lines) {
+      if (line.trim()) data = JSON.parse(line);
+    }
+  }
+  if (!data && buffer.trim()) data = JSON.parse(buffer);
+  if (!data) throw new Error('No response received');
+  if (data.error) throw new Error(data.error);
+  return data.answer;
+}
+
+function AIAnswerCard({ question }) {
+  const [thread, setThread] = useState([]);
+  const [followUp, setFollowUp] = useState('');
+  const [status, setStatus] = useState('idle'); // idle | loading | done | error
+  const [error, setError] = useState('');
+  const askedFor = useRef(null);
+
+  useEffect(() => {
+    if (!question || askedFor.current === question) return;
+    askedFor.current = question;
+    setThread([]);
+    setStatus('loading');
+    setError('');
+    callResearchAPI(question, [])
+      .then((rawA) => {
+        setThread([{ q: question, rawA, htmlA: formatAnswer(rawA) }]);
+        setStatus('done');
+      })
+      .catch((err) => {
+        setError(err.message);
+        setStatus('error');
+      });
+  }, [question]);
+
+  const askFollowUp = async () => {
+    const q = followUp.trim();
+    if (!q || status === 'loading') return;
+    setFollowUp('');
+    setStatus('loading');
+    setError('');
+    try {
+      const rawA = await callResearchAPI(q, thread);
+      setThread((prev) => [...prev, { q, rawA, htmlA: formatAnswer(rawA) }]);
+      setStatus('done');
+    } catch (err) {
+      setError(err.message);
+      setStatus('error');
+    }
+  };
+
+  if (status === 'idle') return null;
+
+  const latest = thread[thread.length - 1];
+
+  return (
+    <div className="ai-answer-card">
+      <div className="ai-answer-header"><Sparkles size={13} /> Research Assistant — wol.jw.org &amp; your notes</div>
+      {thread.slice(0, -1).map((turn, i) => (
+        <div key={i} style={{ marginBottom: 14, paddingBottom: 14, borderBottom: '1px solid var(--border)' }}>
+          <div style={{ fontSize: 13, color: 'var(--text-muted)', fontStyle: 'italic', marginBottom: 6 }}>↪ {turn.q}</div>
+          <div className="ai-answer-body" dangerouslySetInnerHTML={{ __html: turn.htmlA }} />
+        </div>
+      ))}
+      {status === 'loading' && (
+        <div className="loading" style={{ padding: '8px 0' }}>Researching wol.jw.org and your notes...</div>
+      )}
+      {status === 'error' && (
+        <div className="error-msg"><AlertCircle size={14} /> {error}</div>
+      )}
+      {latest && status !== 'loading' && (
+        <>
+          {thread.length > 1 && (
+            <div style={{ fontSize: 13, color: 'var(--text-muted)', fontStyle: 'italic', marginBottom: 6 }}>↪ {latest.q}</div>
+          )}
+          <div className="ai-answer-body" dangerouslySetInnerHTML={{ __html: latest.htmlA }} />
+          <div className="ai-followup-row">
+            <div className="search-wrap" style={{ flex: 1 }}>
+              <input
+                className="search-input"
+                placeholder="Ask a follow-up..."
+                value={followUp}
+                onChange={(e) => setFollowUp(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); askFollowUp(); } }}
+              />
+            </div>
+            <button className="btn-primary small" onClick={askFollowUp} disabled={!followUp.trim()}>Ask</button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function SearchView() {
   const [query, setQuery] = useState('');
+  const [askedQuestion, setAskedQuestion] = useState('');
   const [results, setResults] = useState(null);
   const [loading, setLoading] = useState(false);
   const [showAddNote, setShowAddNote] = useState(false);
@@ -844,7 +974,7 @@ function SearchView() {
   const runSearch = async (e) => {
     e?.preventDefault();
     const q = query.trim();
-    if (!q) { setResults(null); return; }
+    if (!q) { setResults(null); setAskedQuestion(''); return; }
     setLoading(true);
     const [studyRes, bearRes] = await Promise.all([
       supabase.from('study_notes').select('*')
@@ -860,6 +990,7 @@ function SearchView() {
     ].sort((a, b) => new Date(b.note_modified_at || b.note_created_at || 0) - new Date(a.note_modified_at || a.note_created_at || 0));
     setResults(combined);
     setLoading(false);
+    setAskedQuestion(q);
   };
 
   return (
@@ -869,7 +1000,7 @@ function SearchView() {
           <Search size={16} className="search-icon" />
           <input
             className="search-input"
-            placeholder="Search JW Library and Bear notes..."
+            placeholder="Ask a question or search JW Library and Bear notes..."
             value={query}
             onChange={e => setQuery(e.target.value)}
           />
@@ -883,24 +1014,25 @@ function SearchView() {
         <button className="btn-primary small" onClick={() => setShowAddNote(true)}><Plus size={14} /> Add Note</button>
       </div>
       <main className="contacts-list">
+        <AIAnswerCard question={askedQuestion} />
         {loading ? (
           <div className="loading">Searching...</div>
         ) : results === null ? (
           <div className="empty-state">
             <Search size={48} />
             <h3>Search everything</h3>
-            <p>Search across your JW Library notes and Bear talk notes together.</p>
+            <p>Ask a question or search across your JW Library notes and Bear talk notes together.</p>
           </div>
         ) : results.length === 0 ? (
           <div className="empty-state">
             <Search size={48} />
-            <h3>No results</h3>
-            <p>Try a different search term.</p>
+            <h3>No note matches</h3>
+            <p>No notes matched, but check the research answer above.</p>
           </div>
         ) : (
           <div className="visits-list">
             <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 4 }}>
-              {results.length} result{results.length !== 1 ? 's' : ''}
+              {results.length} note result{results.length !== 1 ? 's' : ''}
             </p>
             {results.map(r => <SearchResultCard key={`${r.source}-${r.id}`} result={r} />)}
           </div>

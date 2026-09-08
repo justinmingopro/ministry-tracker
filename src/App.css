@@ -662,6 +662,35 @@ body {
   padding-top: 4px;
 }
 
+.ai-answer-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-sm);
+  padding: 16px 18px;
+  margin-bottom: 12px;
+}
+
+.ai-answer-header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 10px;
+}
+
+.ai-answer-body { font-size: 14px; line-height: 1.7; color: var(--text); }
+.ai-answer-body p { margin-bottom: 12px; }
+.ai-answer-body p:last-child { margin-bottom: 0; }
+.ai-answer-body a { color: var(--accent); text-decoration: none; border-bottom: 1px solid rgba(124,106,240,0.35); }
+.ai-answer-body a:hover { border-color: var(--accent); }
+
+.ai-followup-row { display: flex; gap: 8px; margin-top: 12px; }
+
 .error-msg {
   background: rgba(248,113,113,0.1);
   border: 1px solid rgba(248,113,113,0.3);

@@ -19,7 +19,9 @@ Vercel serverless functions (`/api/*`) alongside the static frontend.
 - **Bear notes** — a read-only mirror of notes from the [Bear](https://bear.app) app
   (e.g. convention/assembly talk notes), pushed in from an iOS Shortcut. Scripture
   references inside `==highlighted==` text are parsed out automatically.
-- **Search** — one search box across both JW Library notes and Bear notes.
+- **Search** — one search box across both JW Library notes and Bear notes, plus an AI
+  research assistant (Claude) that answers the same question using [wol.jw.org](https://wol.jw.org)
+  and any of your own matching notes, citing which is which. Supports follow-up questions.
 
 ## Setup
 
@@ -47,7 +49,8 @@ For deployment (Vercel project env vars — not committed anywhere), also set:
 
 | Variable | Used by | Notes |
 |---|---|---|
-| `REACT_APP_SUPABASE_URL` / `REACT_APP_SUPABASE_ANON_KEY` | frontend + both API routes | same values as above |
+| `REACT_APP_SUPABASE_URL` / `REACT_APP_SUPABASE_ANON_KEY` | frontend + all API routes | same values as above |
+| `ANTHROPIC_API_KEY` | `/api/search` | Claude API key for the research assistant, from [console.anthropic.com](https://console.anthropic.com). Use a key dedicated to this app rather than reusing one from another project. |
 | `ICLOUD_APPLE_ID` | `/api/calendar-push` | your Apple ID email |
 | `ICLOUD_APP_SPECIFIC_PASSWORD` | `/api/calendar-push` | an **app-specific** password from [appleid.apple.com](https://appleid.apple.com) → Sign-In and Security → App-Specific Passwords. Not your real Apple ID password, revocable anytime. |
 | `ICLOUD_STUDY_CALENDAR_NAME` | `/api/calendar-push` | must exactly match the calendar's display name in the Calendar app/iCloud. Defaults to `JW/Ministry`. |
