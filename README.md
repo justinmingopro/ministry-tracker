@@ -22,6 +22,10 @@ Vercel serverless functions (`/api/*`) alongside the static frontend.
 - **Search** — one search box across both JW Library notes and Bear notes, plus an AI
   research assistant (Claude) that answers the same question using [wol.jw.org](https://wol.jw.org)
   and any of your own matching notes, citing which is which. Supports follow-up questions.
+- **Trades** — for the public talk coordinator: tracks which congregation has confirmed
+  a bilateral month trade, and when. Always shows a rolling ~12 months ahead so an
+  unconfirmed upcoming month is visible before it becomes urgent. Individual speaker
+  scheduling still happens in NW Scheduler — this only tracks the month-level agreement.
 
 ## Setup
 
@@ -33,6 +37,7 @@ in the Supabase SQL Editor, **in order**, from the project root:
 1. `supabase-schema.sql` — contacts + visits
 2. `supabase-schema-study.sql` — study log + JW Library study notes
 3. `supabase-schema-bear.sql` — Bear notes
+4. `supabase-schema-pubtalk.sql` — public talk trades
 
 ### 2. Environment variables
 
@@ -117,6 +122,22 @@ a list was archived — correct these individually in the Contacts tab afterward
 some were actually "not interested" or "do not call" instead. Historical study log
 entries are **not** pushed to your iCloud calendar (unlike new entries logged
 through the app), to avoid retroactively flooding it with hundreds of events.
+
+## Importing Public Talk Trade history (one-time migration)
+
+`scripts/import_pub_talk_trades.py` is a one-time migration of a "Pub Talk Trades"
+tracking doc into the `pub_talk_trades` table — run `supabase-schema-pubtalk.sql`
+first. It has no external inputs (the historical rows are transcribed directly into
+the script), so just run it:
+
+```
+python scripts/import_pub_talk_trades.py            # dry run — prints a preview, writes nothing
+python scripts/import_pub_talk_trades.py --commit    # actually imports
+```
+
+Safe to re-run: rows are upserted on `trade_month`. If you're setting this up fresh
+(no prior doc to migrate), skip this script — the Trades tab starts empty and you
+fill it in as congregations confirm.
 
 ## Importing Bear notes
 

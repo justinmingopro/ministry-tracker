@@ -964,6 +964,210 @@ function AIAnswerCard({ question }) {
   );
 }
 
+function addMonths(year, month, n) {
+  const total = year * 12 + (month - 1) + n;
+  return { year: Math.floor(total / 12), month: (total % 12) + 1 };
+}
+
+function monthKey(year, month) { return `${year}-${String(month).padStart(2, '0')}`; }
+
+// Rolling ~12-month window starting this month, unioned with any month that
+// already has a trade row — so a far-future confirmation (or an old one kept
+// for reference) stays visible even outside the rolling window.
+function buildTradeMonths(trades) {
+  const today = new Date();
+  const keys = new Set();
+  for (let i = 0; i < 12; i++) {
+    const { year, month } = addMonths(today.getFullYear(), today.getMonth() + 1, i);
+    keys.add(monthKey(year, month));
+  }
+  trades.forEach(t => keys.add(t.trade_month.slice(0, 7)));
+
+  return [...keys].sort().map(key => {
+    const [year, month] = key.split('-').map(Number);
+    return { key, year, month, trade: trades.find(t => t.trade_month.slice(0, 7) === key) || null };
+  });
+}
+
+function TradeForm({ month, trade, onSave, onClose, onDelete }) {
+  const [form, setForm] = useState({
+    congregation: trade?.congregation || '',
+    coordinator_name: trade?.coordinator_name || '',
+    coordinator_phone: trade?.coordinator_phone || '',
+    coordinator_email: trade?.coordinator_email || '',
+    confirmed_date: trade?.confirmed_date || '',
+    notes: trade?.notes || '',
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setSaving(true);
+    setError('');
+    try {
+      const payload = { ...form, trade_month: `${month.key}-01`, confirmed_date: form.confirmed_date || null };
+      const { data, error: err } = await supabase
+        .from('pub_talk_trades')
+        .upsert(payload, { onConflict: 'trade_month' })
+        .select()
+        .single();
+      if (err) throw err;
+      onSave(data);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="form">
+      {error && <div className="error-msg"><AlertCircle size={14} /> {error}</div>}
+      <div className="form-row">
+        <label>Congregation</label>
+        <input value={form.congregation} onChange={e => setForm(f => ({ ...f, congregation: e.target.value }))} placeholder="e.g. Bountiful" />
+      </div>
+      <div className="form-row">
+        <label>Talk Coordinator</label>
+        <input value={form.coordinator_name} onChange={e => setForm(f => ({ ...f, coordinator_name: e.target.value }))} placeholder="Name" />
+      </div>
+      <div className="form-row">
+        <label>Phone</label>
+        <input value={form.coordinator_phone} onChange={e => setForm(f => ({ ...f, coordinator_phone: e.target.value }))} placeholder="Optional" />
+      </div>
+      <div className="form-row">
+        <label>Email</label>
+        <input value={form.coordinator_email} onChange={e => setForm(f => ({ ...f, coordinator_email: e.target.value }))} placeholder="Optional" />
+      </div>
+      <div className="form-row">
+        <label>Confirmed Date</label>
+        <input type="date" value={form.confirmed_date} onChange={e => setForm(f => ({ ...f, confirmed_date: e.target.value }))} />
+      </div>
+      <div className="form-row">
+        <label>Notes</label>
+        <textarea value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} rows={3} placeholder="Anything else worth recording" />
+      </div>
+      <div className="form-actions">
+        {trade && onDelete && (
+          <button type="button" className="btn-danger" style={{ marginRight: 'auto' }} onClick={() => onDelete(trade)}>
+            <Trash2 size={14} />
+          </button>
+        )}
+        <button type="button" className="btn-secondary" onClick={onClose}>Cancel</button>
+        <button type="submit" className="btn-primary" disabled={saving}>{saving ? 'Saving...' : 'Save'}</button>
+      </div>
+    </form>
+  );
+}
+
+function TradeRow({ entry, onClick }) {
+  const { year, month, trade } = entry;
+  const label = `${MONTH_NAMES[month - 1]} ${year}`;
+  let status, statusStyle;
+  if (trade?.confirmed_date) {
+    status = `Confirmed ${trade.confirmed_date}`;
+    statusStyle = { color: '#4ade80' };
+  } else if (trade?.congregation || trade?.coordinator_name) {
+    status = 'Not yet confirmed';
+    statusStyle = { color: '#facc15' };
+  } else {
+    status = 'Not arranged';
+    statusStyle = { color: 'var(--text-muted)' };
+  }
+
+  return (
+    <div className="visit-card" style={{ cursor: 'pointer' }} onClick={onClick}>
+      <div className="visit-header">
+        <span className="visit-date"><Calendar size={13} /> {label}</span>
+        <span style={{ fontSize: 12, fontWeight: 600, ...statusStyle }}>{status}</span>
+      </div>
+      <div className="visit-field">
+        <strong>{trade?.congregation || <span style={{ color: 'var(--text-muted)' }}>No congregation set</span>}</strong>
+      </div>
+      {trade?.coordinator_name && <div className="visit-field">{trade.coordinator_name}</div>}
+      {trade?.notes && <div className="visit-notes">{trade.notes}</div>}
+    </div>
+  );
+}
+
+function TradesView() {
+  const [trades, setTrades] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [editingMonth, setEditingMonth] = useState(null);
+  const [confirmDelete, setConfirmDelete] = useState(null);
+
+  const loadTrades = useCallback(async () => {
+    setLoading(true);
+    const { data } = await supabase.from('pub_talk_trades').select('*').order('trade_month', { ascending: true });
+    setTrades(data || []);
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { loadTrades(); }, [loadTrades]);
+
+  const handleSave = (row) => {
+    setTrades(prev => {
+      const idx = prev.findIndex(t => t.id === row.id);
+      if (idx >= 0) { const next = [...prev]; next[idx] = row; return next; }
+      return [...prev, row];
+    });
+    setEditingMonth(null);
+  };
+
+  const handleDelete = async (row) => {
+    await supabase.from('pub_talk_trades').delete().eq('id', row.id);
+    setTrades(prev => prev.filter(t => t.id !== row.id));
+    setConfirmDelete(null);
+    setEditingMonth(null);
+  };
+
+  const months = buildTradeMonths(trades);
+
+  return (
+    <div className="detail-view">
+      <div className="visits-header">
+        <h2>Public Talk Trades <span className="count-badge">{trades.length}</span></h2>
+      </div>
+      <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 12 }}>
+        Bilateral month trades confirmed with other congregations. Individual speaker scheduling still happens in NW Scheduler.
+      </p>
+
+      {loading ? <div className="loading">Loading trades...</div> : (
+        <div className="visits-list">
+          {months.map(entry => (
+            <TradeRow key={entry.key} entry={entry} onClick={() => setEditingMonth(entry)} />
+          ))}
+        </div>
+      )}
+
+      {editingMonth && (
+        <Modal title={`${MONTH_NAMES[editingMonth.month - 1]} ${editingMonth.year}`} onClose={() => setEditingMonth(null)}>
+          <TradeForm
+            month={editingMonth}
+            trade={editingMonth.trade}
+            onSave={handleSave}
+            onClose={() => setEditingMonth(null)}
+            onDelete={(row) => setConfirmDelete(row)}
+          />
+        </Modal>
+      )}
+
+      {confirmDelete && (
+        <Modal title="Confirm Delete" onClose={() => setConfirmDelete(null)}>
+          <div className="form">
+            <p style={{ marginBottom: 16 }}>Clear this month's trade info? This cannot be undone.</p>
+            <div className="form-actions">
+              <button className="btn-secondary" onClick={() => setConfirmDelete(null)}>Cancel</button>
+              <button className="btn-danger" onClick={() => handleDelete(confirmDelete)}>Delete</button>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
 function SearchView() {
   const [query, setQuery] = useState('');
   const [askedQuestion, setAskedQuestion] = useState('');
@@ -1190,6 +1394,7 @@ export default function App() {
         <button className={`tab-btn ${tab === 'studyLog' ? 'active' : ''}`} onClick={() => setTab('studyLog')}>Study Log</button>
         <button className={`tab-btn ${tab === 'studyNotes' ? 'active' : ''}`} onClick={() => setTab('studyNotes')}>Study Notes</button>
         <button className={`tab-btn ${tab === 'search' ? 'active' : ''}`} onClick={() => setTab('search')}>Search</button>
+        <button className={`tab-btn ${tab === 'trades' ? 'active' : ''}`} onClick={() => setTab('trades')}>Trades</button>
       </div>
 
       {tab === 'contacts' && (
@@ -1238,6 +1443,7 @@ export default function App() {
       {tab === 'studyLog' && <StudyLogView />}
       {tab === 'studyNotes' && <StudyNotesView />}
       {tab === 'search' && <SearchView />}
+      {tab === 'trades' && <TradesView />}
     </div>
   );
 }
