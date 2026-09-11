@@ -60,8 +60,30 @@ For deployment (Vercel project env vars — not committed anywhere), also set:
 | `ICLOUD_APP_SPECIFIC_PASSWORD` | `/api/calendar-push` | an **app-specific** password from [appleid.apple.com](https://appleid.apple.com) → Sign-In and Security → App-Specific Passwords. Not your real Apple ID password, revocable anytime. |
 | `ICLOUD_STUDY_CALENDAR_NAME` | `/api/calendar-push` | must exactly match the calendar's display name in the Calendar app/iCloud. Defaults to `JW/Ministry`. |
 | `BEAR_IMPORT_TOKEN` | `/api/bear-import` | optional but recommended — a random string. If set, the Bear import endpoint requires `Authorization: Bearer <token>`; if unset, the endpoint accepts unauthenticated requests from anyone who finds the URL. |
+| `SUPABASE_SERVICE_ROLE_KEY` | `/api/bear-import` | **server-only, never `REACT_APP_`-prefixed** — from Supabase **Project Settings → API → service_role key** ("keep this secret"). Bypasses Row Level Security, so it's only used server-side for the one route (the iOS Shortcut import) that has no Supabase user session to authenticate with. |
 
-### 3. Install and run
+### 3. Security: login + Row Level Security
+
+This app has no per-row ownership (no `user_id` columns) — it's single-user, gated
+by a single Supabase Auth login rather than per-row policies. Set it up in this
+exact order, since doing it out of order can lock the live app out of its own data:
+
+1. **Create your login.** In the Supabase dashboard: **Authentication → Users → Add User**,
+   with your email and a password. (There's no self-serve signup page in the app —
+   intentional, since this is single-user.)
+2. **Add `SUPABASE_SERVICE_ROLE_KEY`** to Vercel's environment variables (see table above).
+3. **Deploy the app code** (push to `main` / merge — Vercel auto-deploys) and **confirm you
+   can log in** and everything still works as before.
+4. **Only after step 3 succeeds**, run `supabase-schema-rls.sql` in the Supabase SQL Editor.
+   This is what actually enables Row Level Security — before this point the tables are
+   still open to the anon key, same as they always were. Its file header repeats this
+   ordering requirement.
+
+If you ever need to add a second login (e.g. for someone else), do it the same way —
+Authentication → Users → Add User — no code changes needed, since the RLS policies just
+require "authenticated," not a specific user.
+
+### 4. Install and run
 
 ```
 npm install

@@ -147,9 +147,13 @@ export default async function handler(req, res) {
   }
 
   const supabaseUrl = process.env.REACT_APP_SUPABASE_URL;
-  const supabaseKey = process.env.REACT_APP_SUPABASE_ANON_KEY;
+  // Uses the service-role key, not the anon key: this endpoint is hit by a
+  // non-interactive iOS Shortcut with no Supabase user session to present,
+  // so once RLS requires an authenticated session the anon key alone can no
+  // longer write here. BEAR_IMPORT_TOKEN above is what actually gates access.
+  const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!supabaseUrl || !supabaseKey) {
-    return res.status(500).json({ error: 'Supabase not configured' });
+    return res.status(500).json({ error: 'Supabase not configured (missing SUPABASE_SERVICE_ROLE_KEY)' });
   }
 
   const { notes } = req.body || {};

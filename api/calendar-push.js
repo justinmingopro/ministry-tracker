@@ -1,6 +1,19 @@
 // Creates/updates/deletes events on the "JW/Ministry" iCloud calendar for study_log
 // entries, via CalDAV (Apple's calendars don't have a REST API like Google's).
 import { DAVClient } from 'tsdav';
+import { createClient } from '@supabase/supabase-js';
+
+// This endpoint doesn't touch Supabase itself, but it can create/delete real
+// events on the user's personal iCloud calendar — requiring a logged-in
+// session keeps it from being an open POST endpoint anyone could hit.
+async function requireUser(req) {
+  const auth = req.headers.authorization || '';
+  const token = auth.startsWith('Bearer ') ? auth.slice(7) : null;
+  if (!token) return false;
+  const anon = createClient(process.env.REACT_APP_SUPABASE_URL, process.env.REACT_APP_SUPABASE_ANON_KEY);
+  const { data, error } = await anon.auth.getUser(token);
+  return !error && !!data.user;
+}
 
 async function getClientAndCalendar() {
   const username = process.env.ICLOUD_APPLE_ID;
@@ -65,9 +78,11 @@ function buildIcs({ uid, summary, description, date }) {
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+
+  if (!(await requireUser(req))) return res.status(401).json({ error: 'Unauthorized' });
 
   const { action, eventId, event } = req.body || {};
   if (!action || !['create', 'update', 'delete'].includes(action)) {

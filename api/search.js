@@ -60,15 +60,37 @@ function buildNotesContext(notes) {
     .join('\n\n');
 }
 
+// Verifies the caller sent a real Supabase session (not just the public anon
+// key) — required both so this doesn't run up API costs for randoms who find
+// the URL, and because RLS on study_notes/bear_notes means an unauthenticated
+// request would see no notes anyway.
+async function requireUser(req) {
+  const auth = req.headers.authorization || '';
+  const token = auth.startsWith('Bearer ') ? auth.slice(7) : null;
+  if (!token) return null;
+  const anon = createClient(process.env.REACT_APP_SUPABASE_URL, process.env.REACT_APP_SUPABASE_ANON_KEY);
+  const { data, error } = await anon.auth.getUser(token);
+  if (error || !data.user) return null;
+  return token;
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).end();
 
   const { question, thread = [] } = req.body || {};
   if (!question) return res.status(400).json({ error: 'No question provided' });
 
+  const userToken = await requireUser(req);
+  if (!userToken) return res.status(401).json({ error: 'Unauthorized' });
+
   const supabaseUrl = process.env.REACT_APP_SUPABASE_URL;
   const supabaseKey = process.env.REACT_APP_SUPABASE_ANON_KEY;
-  const supabase = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null;
+  // Forward the caller's own session so Postgrest/RLS sees this as an
+  // authenticated request, rather than reaching for a service-role key for
+  // what's just a read on the logged-in user's own notes.
+  const supabase = supabaseUrl && supabaseKey
+    ? createClient(supabaseUrl, supabaseKey, { global: { headers: { Authorization: `Bearer ${userToken}` } } })
+    : null;
 
   let notesContext = '';
   try {

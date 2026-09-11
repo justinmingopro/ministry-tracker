@@ -3,9 +3,17 @@ import { supabase } from './supabaseClient';
 import {
   Search, Plus, ChevronLeft, BookOpen, MapPin, Phone,
   User, Calendar, Tag, Edit2, Trash2, X, Sun, Moon,
-  Filter, ChevronDown, AlertCircle, Download, Upload, Sparkles
+  Filter, ChevronDown, AlertCircle, Download, Upload, Sparkles, LogOut
 } from 'lucide-react';
 import './App.css';
+
+// Attaches the current Supabase session's access token so server-side API
+// routes can verify the caller is logged in (checked in api/search.js and
+// api/calendar-push.js) — the anon key alone won't be enough once RLS is on.
+async function authHeader() {
+  const { data } = await supabase.auth.getSession();
+  return data.session ? { Authorization: `Bearer ${data.session.access_token}` } : {};
+}
 
 const STATUS_CONFIG = {
   'interested': { label: 'Interested', color: '#4ade80', bg: 'rgba(74,222,128,0.15)' },
@@ -337,7 +345,7 @@ function StudyLogForm({ entry, onSave, onClose, onDelete }) {
     try {
       const resp = await fetch('/api/calendar-push', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
         body: JSON.stringify({
           action: savedEntry.calendar_event_id ? 'update' : 'create',
           eventId: savedEntry.calendar_event_id,
@@ -475,7 +483,7 @@ function StudyLogView() {
       try {
         await fetch('/api/calendar-push', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
           body: JSON.stringify({ action: 'delete', eventId: entry.calendar_event_id }),
         });
       } catch (calErr) {
@@ -851,7 +859,7 @@ function formatAnswer(text) {
 async function callResearchAPI(question, thread) {
   const res = await fetch('/api/search', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
     body: JSON.stringify({
       question,
       thread: thread.map((t) => ({ q: t.q, a: t.rawA })),
@@ -1292,7 +1300,7 @@ function SearchView() {
   );
 }
 
-export default function App() {
+function MinistryTracker() {
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem('darkMode') !== 'false');
   const [tab, setTab] = useState('contacts');
   const [contacts, setContacts] = useState([]);
@@ -1418,6 +1426,9 @@ export default function App() {
           <button className="icon-btn" onClick={() => setDarkMode(d => !d)}>
             {darkMode ? <Sun size={18} /> : <Moon size={18} />}
           </button>
+          <button className="icon-btn" onClick={() => supabase.auth.signOut()} title="Sign out">
+            <LogOut size={18} />
+          </button>
           {tab === 'contacts' && (
             <button className="btn-primary" onClick={() => setShowAddContact(true)}>
               <Plus size={16} /> Add Contact
@@ -1483,4 +1494,57 @@ export default function App() {
       {tab === 'trades' && <TradesView />}
     </div>
   );
+}
+
+function Login() {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [signingIn, setSigningIn] = useState(false);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setSigningIn(true);
+    setError('');
+    const { error: err } = await supabase.auth.signInWithPassword({ email, password });
+    if (err) setError(err.message);
+    setSigningIn(false);
+  };
+
+  return (
+    <div className="app" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}>
+      <form onSubmit={handleSubmit} className="form" style={{ width: '100%', maxWidth: 320 }}>
+        <h2 style={{ marginBottom: 4 }}>Ministry Tracker</h2>
+        <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 16 }}>Sign in to continue.</p>
+        {error && <div className="error-msg"><AlertCircle size={14} /> {error}</div>}
+        <div className="form-row">
+          <label>Email</label>
+          <input type="email" autoComplete="username" value={email} onChange={e => setEmail(e.target.value)} required />
+        </div>
+        <div className="form-row">
+          <label>Password</label>
+          <input type="password" autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} required />
+        </div>
+        <div className="form-actions">
+          <button type="submit" className="btn-primary" disabled={signingIn} style={{ width: '100%' }}>
+            {signingIn ? 'Signing in...' : 'Sign In'}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+export default function App() {
+  const [session, setSession] = useState(undefined); // undefined = loading, null = signed out
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => setSession(data.session));
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, newSession) => setSession(newSession));
+    return () => listener.subscription.unsubscribe();
+  }, []);
+
+  if (session === undefined) return null; // brief flash while the session is resolved
+  if (!session) return <Login />;
+  return <MinistryTracker />;
 }
