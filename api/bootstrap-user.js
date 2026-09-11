@@ -13,8 +13,10 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Body must be { email, password }' });
   }
 
-  const supabaseUrl = process.env.REACT_APP_SUPABASE_URL;
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  // .trim() guards against a stray trailing newline/space from copy-pasting
+  // the key into Vercel's env var field — a common cause of "Invalid API key".
+  const supabaseUrl = process.env.REACT_APP_SUPABASE_URL?.trim();
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
   if (!supabaseUrl || !serviceKey) {
     return res.status(500).json({ error: 'Supabase not configured (missing SUPABASE_SERVICE_ROLE_KEY)' });
   }
