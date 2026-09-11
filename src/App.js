@@ -983,10 +983,7 @@ function buildTradeMonths(trades) {
   }
   trades.forEach(t => keys.add(t.trade_month.slice(0, 7)));
 
-  return [...keys].sort().map(key => {
-    const [year, month] = key.split('-').map(Number);
-    return { key, year, month, trade: trades.find(t => t.trade_month.slice(0, 7) === key) || null };
-  });
+  return [...keys].sort().map(key => monthEntryFor(trades, key));
 }
 
 function TradeForm({ month, trade, onSave, onClose, onDelete }) {
@@ -1091,10 +1088,39 @@ function TradeRow({ entry, onClick }) {
   );
 }
 
+function monthEntryFor(trades, key) {
+  const [year, month] = key.split('-').map(Number);
+  return { key, year, month, trade: trades.find(t => t.trade_month.slice(0, 7) === key) || null };
+}
+
+function AddMonthPicker({ onPick, onClose }) {
+  const today = new Date();
+  const [value, setValue] = useState(monthKey(today.getFullYear(), today.getMonth() + 1));
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (value) onPick(value);
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="form">
+      <div className="form-row">
+        <label>Month</label>
+        <input type="month" value={value} onChange={e => setValue(e.target.value)} required />
+      </div>
+      <div className="form-actions">
+        <button type="button" className="btn-secondary" onClick={onClose}>Cancel</button>
+        <button type="submit" className="btn-primary">Continue</button>
+      </div>
+    </form>
+  );
+}
+
 function TradesView() {
   const [trades, setTrades] = useState([]);
   const [loading, setLoading] = useState(true);
   const [editingMonth, setEditingMonth] = useState(null);
+  const [pickingMonth, setPickingMonth] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(null);
 
   const loadTrades = useCallback(async () => {
@@ -1128,9 +1154,11 @@ function TradesView() {
     <div className="detail-view">
       <div className="visits-header">
         <h2>Public Talk Trades <span className="count-badge">{trades.length}</span></h2>
+        <button className="btn-primary small" onClick={() => setPickingMonth(true)}><Plus size={14} /> Add Month</button>
       </div>
       <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 12 }}>
         Bilateral month trades confirmed with other congregations. Individual speaker scheduling still happens in NW Scheduler.
+        The list below always shows the next 12 months — use Add Month for anything confirmed further out.
       </p>
 
       {loading ? <div className="loading">Loading trades...</div> : (
@@ -1139,6 +1167,15 @@ function TradesView() {
             <TradeRow key={entry.key} entry={entry} onClick={() => setEditingMonth(entry)} />
           ))}
         </div>
+      )}
+
+      {pickingMonth && (
+        <Modal title="Add Month" onClose={() => setPickingMonth(false)}>
+          <AddMonthPicker
+            onPick={(key) => { setPickingMonth(false); setEditingMonth(monthEntryFor(trades, key)); }}
+            onClose={() => setPickingMonth(false)}
+          />
+        </Modal>
       )}
 
       {editingMonth && (
