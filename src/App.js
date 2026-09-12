@@ -639,12 +639,13 @@ function StudyNoteCard({ note }) {
   );
 }
 
-function StudyNotesView() {
+function StudyNotesView({ highlightNote, onHighlighted }) {
   const [notes, setNotes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [tagFilter, setTagFilter] = useState('all');
   const [tags, setTags] = useState([]);
+  const noteRefs = useRef({});
 
   const loadNotes = useCallback(async () => {
     setLoading(true);
@@ -658,7 +659,19 @@ function StudyNotesView() {
 
   useEffect(() => { loadNotes(); }, [loadNotes]);
 
+  useEffect(() => {
+    if (!highlightNote) return;
+    const el = noteRefs.current[highlightNote.id];
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    const t = setTimeout(() => onHighlighted?.(), 2500);
+    return () => clearTimeout(t);
+  }, [notes, highlightNote, onHighlighted]);
+
   const filtered = notes.filter(n => {
+    // A note jumped to via a research-assistant reference chip always shows,
+    // regardless of whatever search/tag filter happens to be active — the
+    // point is to land on it, not have it hidden by an unrelated filter.
+    if (highlightNote && highlightNote.id === n.id) return true;
     const q = search.toLowerCase();
     const matchSearch = !search ||
       n.content?.toLowerCase().includes(q) ||
@@ -694,7 +707,15 @@ function StudyNotesView() {
           </div>
         ) : (
           <div className="visits-list">
-            {filtered.map(n => <StudyNoteCard key={n.id} note={n} />)}
+            {filtered.map(n => (
+              <div
+                key={n.id}
+                ref={el => { noteRefs.current[n.id] = el; }}
+                className={highlightNote?.id === n.id ? 'note-highlight' : ''}
+              >
+                <StudyNoteCard note={n} />
+              </div>
+            ))}
           </div>
         )}
       </main>
@@ -919,10 +940,29 @@ async function callResearchAPI(question, thread) {
   if (!data && buffer.trim()) data = JSON.parse(buffer);
   if (!data) throw new Error('No response received');
   if (data.error) throw new Error(data.error);
-  return data.answer;
+  return { answer: data.answer, references: data.references || [] };
 }
 
-function AIAnswerCard({ question }) {
+function NoteReferenceChips({ references, onNavigateToNote }) {
+  if (!references || references.length === 0) return null;
+  return (
+    <div className="note-ref-chips">
+      {references.map((ref) => (
+        <button
+          key={`${ref.table}:${ref.id}`}
+          type="button"
+          className="note-ref-chip"
+          onClick={() => onNavigateToNote(ref)}
+          title={ref.table === 'bear_notes' ? 'Jump to this note in Search' : 'Jump to this note in Study Notes'}
+        >
+          <BookOpen size={12} /> {ref.title}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function AIAnswerCard({ question, onNavigateToNote }) {
   const [thread, setThread] = useState([]);
   const [followUp, setFollowUp] = useState('');
   const [status, setStatus] = useState('idle'); // idle | loading | done | error
@@ -936,8 +976,8 @@ function AIAnswerCard({ question }) {
     setStatus('loading');
     setError('');
     callResearchAPI(question, [])
-      .then((rawA) => {
-        setThread([{ q: question, rawA, htmlA: formatAnswer(rawA) }]);
+      .then(({ answer: rawA, references }) => {
+        setThread([{ q: question, rawA, htmlA: formatAnswer(rawA), references }]);
         setStatus('done');
       })
       .catch((err) => {
@@ -953,8 +993,8 @@ function AIAnswerCard({ question }) {
     setStatus('loading');
     setError('');
     try {
-      const rawA = await callResearchAPI(q, thread);
-      setThread((prev) => [...prev, { q, rawA, htmlA: formatAnswer(rawA) }]);
+      const { answer: rawA, references } = await callResearchAPI(q, thread);
+      setThread((prev) => [...prev, { q, rawA, htmlA: formatAnswer(rawA), references }]);
       setStatus('done');
     } catch (err) {
       setError(err.message);
@@ -973,6 +1013,7 @@ function AIAnswerCard({ question }) {
         <div key={i} style={{ marginBottom: 14, paddingBottom: 14, borderBottom: '1px solid var(--border)' }}>
           <div style={{ fontSize: 13, color: 'var(--text-muted)', fontStyle: 'italic', marginBottom: 6 }}>↪ {turn.q}</div>
           <div className="ai-answer-body" dangerouslySetInnerHTML={{ __html: turn.htmlA }} />
+          <NoteReferenceChips references={turn.references} onNavigateToNote={onNavigateToNote} />
         </div>
       ))}
       {status === 'loading' && (
@@ -987,6 +1028,7 @@ function AIAnswerCard({ question }) {
             <div style={{ fontSize: 13, color: 'var(--text-muted)', fontStyle: 'italic', marginBottom: 6 }}>↪ {latest.q}</div>
           )}
           <div className="ai-answer-body" dangerouslySetInnerHTML={{ __html: latest.htmlA }} />
+          <NoteReferenceChips references={latest.references} onNavigateToNote={onNavigateToNote} />
           <div className="ai-followup-row">
             <div className="search-wrap" style={{ flex: 1 }}>
               <input
@@ -1246,16 +1288,15 @@ function TradesView() {
   );
 }
 
-function SearchView() {
+function SearchView({ highlightNote, onHighlighted, onNavigateToNote }) {
   const [query, setQuery] = useState('');
   const [askedQuestion, setAskedQuestion] = useState('');
   const [results, setResults] = useState(null);
   const [loading, setLoading] = useState(false);
   const [showAddNote, setShowAddNote] = useState(false);
+  const resultRefs = useRef({});
 
-  const runSearch = async (e) => {
-    e?.preventDefault();
-    const q = query.trim();
+  const performSearch = useCallback(async (q) => {
     if (!q) { setResults(null); setAskedQuestion(''); return; }
     setLoading(true);
     const [studyRes, bearRes] = await Promise.all([
@@ -1273,7 +1314,29 @@ function SearchView() {
     setResults(combined);
     setLoading(false);
     setAskedQuestion(q);
+  }, []);
+
+  const runSearch = (e) => {
+    e?.preventDefault();
+    performSearch(query.trim());
   };
+
+  // Jumping here from a Bear-note reference chip — Bear notes have no
+  // dedicated browsing tab, so land on Search pre-searched for that note.
+  useEffect(() => {
+    if (highlightNote) {
+      setQuery(highlightNote.title);
+      performSearch(highlightNote.title);
+    }
+  }, [highlightNote, performSearch]);
+
+  useEffect(() => {
+    if (!highlightNote || !results) return;
+    const el = resultRefs.current[`bear-${highlightNote.id}`];
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    const t = setTimeout(() => onHighlighted?.(), 2500);
+    return () => clearTimeout(t);
+  }, [results, highlightNote, onHighlighted]);
 
   return (
     <>
@@ -1296,7 +1359,7 @@ function SearchView() {
         <button className="btn-primary small" onClick={() => setShowAddNote(true)}><Plus size={14} /> Add Note</button>
       </div>
       <main className="contacts-list">
-        <AIAnswerCard question={askedQuestion} />
+        <AIAnswerCard question={askedQuestion} onNavigateToNote={onNavigateToNote} />
         {loading ? (
           <div className="loading">Searching...</div>
         ) : results === null ? (
@@ -1316,7 +1379,15 @@ function SearchView() {
             <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 4 }}>
               {results.length} note result{results.length !== 1 ? 's' : ''}
             </p>
-            {results.map(r => <SearchResultCard key={`${r.source}-${r.id}`} result={r} />)}
+            {results.map(r => (
+              <div
+                key={`${r.source}-${r.id}`}
+                ref={el => { resultRefs.current[`${r.source}-${r.id}`] = el; }}
+                className={highlightNote && r.source === 'bear' && highlightNote.id === r.id ? 'note-highlight' : ''}
+              >
+                <SearchResultCard result={r} />
+              </div>
+            ))}
           </div>
         )}
       </main>
@@ -1345,6 +1416,15 @@ function MinistryTracker() {
   const [selectedContact, setSelectedContact] = useState(null);
   const [showAddContact, setShowAddContact] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [highlightNote, setHighlightNote] = useState(null); // { table, id, title } | null
+
+  // A note-reference chip in the research assistant's answer calls this to
+  // jump to that note — study_notes lives in its own tab, bear_notes only
+  // shows up via Search, so route to whichever actually has it.
+  const handleNavigateToNote = (ref) => {
+    setTab(ref.table === 'study_notes' ? 'studyNotes' : 'search');
+    setHighlightNote(ref);
+  };
 
   const handleExportBackup = async () => {
     setExporting(true);
@@ -1522,8 +1602,19 @@ function MinistryTracker() {
       )}
 
       {tab === 'studyLog' && <StudyLogView />}
-      {tab === 'studyNotes' && <StudyNotesView />}
-      {tab === 'search' && <SearchView />}
+      {tab === 'studyNotes' && (
+        <StudyNotesView
+          highlightNote={highlightNote?.table === 'study_notes' ? highlightNote : null}
+          onHighlighted={() => setHighlightNote(null)}
+        />
+      )}
+      {tab === 'search' && (
+        <SearchView
+          highlightNote={highlightNote?.table === 'bear_notes' ? highlightNote : null}
+          onHighlighted={() => setHighlightNote(null)}
+          onNavigateToNote={handleNavigateToNote}
+        />
+      )}
       {tab === 'trades' && <TradesView />}
     </div>
   );

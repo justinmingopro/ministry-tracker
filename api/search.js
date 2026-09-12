@@ -36,12 +36,16 @@ async function findRelevantNotes(supabase, question) {
   ]);
 
   const study = (studyRes.data || []).map((n) => ({
+    id: n.id,
+    table: 'study_notes',
     source: 'JW Library note',
     title: n.title,
     ref: n.scripture_ref || n.publication_ref || '',
     content: n.content || '',
   }));
   const bear = (bearRes.data || []).map((n) => ({
+    id: n.id,
+    table: 'bear_notes',
     source: 'Bear note',
     title: n.title,
     ref: (n.scripture_refs || []).map((r) => r.ref).join(', '),
@@ -53,11 +57,32 @@ async function findRelevantNotes(supabase, question) {
 function buildNotesContext(notes) {
   if (notes.length === 0) return '';
   return notes
-    .map((n, i) => {
-      const heading = `[Note ${i + 1} — ${n.source}${n.title ? `: "${n.title}"` : ''}${n.ref ? ` (${n.ref})` : ''}]`;
+    .map((n) => {
+      const heading = `[${n.source}${n.title ? `: "${n.title}"` : ''}${n.ref ? ` (${n.ref})` : ''} — id: ${n.table}:${n.id}]`;
       return `${heading}\n${n.content.slice(0, 1500)}`;
     })
     .join('\n\n');
+}
+
+// Pulls the [[note:table:id]] citation markers Claude was instructed to add
+// out of the visible answer text, resolving each against the notes actually
+// looked up so the client can render real "jump to this note" links —
+// rather than trusting the model to produce a correct inline hyperlink
+// itself, which risks a slightly-wrong id linking to nothing or the wrong note.
+function extractNoteReferences(answer, notes) {
+  const byKey = new Map(notes.map((n) => [`${n.table}:${n.id}`, n]));
+  const seen = new Set();
+  const references = [];
+  const cleaned = answer.replace(/\[\[note:(study_notes|bear_notes):([0-9a-f-]{36})\]\]/gi, (_, table, id) => {
+    const key = `${table}:${id}`;
+    const note = byKey.get(key);
+    if (note && !seen.has(key)) {
+      seen.add(key);
+      references.push({ table: note.table, id: note.id, title: note.title || note.ref || 'Untitled note' });
+    }
+    return '';
+  });
+  return { cleaned: cleaned.replace(/[ \t]+\n/g, '\n').trim(), references };
 }
 
 // Verifies the caller sent a real Supabase session (not just the public anon
@@ -92,12 +117,13 @@ export default async function handler(req, res) {
     ? createClient(supabaseUrl, supabaseKey, { global: { headers: { Authorization: `Bearer ${userToken}` } } })
     : null;
 
-  let notesContext = '';
+  let notes = [];
   try {
-    if (supabase) notesContext = buildNotesContext(await findRelevantNotes(supabase, question));
+    if (supabase) notes = await findRelevantNotes(supabase, question);
   } catch (err) {
     console.error('Notes lookup failed (continuing with wol.jw.org only):', err);
   }
+  const notesContext = buildNotesContext(notes);
 
   const SYSTEM_PROMPT = `You are a research assistant for a Jehovah's Witness doing ministry and
 personal Bible study. Answer questions using up to two sources:
@@ -111,7 +137,11 @@ RULES:
 1. Prefer wol.jw.org for doctrinal or factual claims — include direct links.
 2. When a personal note is relevant, weave it in and say clearly it's from "your notes"
    (mentioning its title if it has one) — never present your own notes as wol.jw.org content
-   or vice versa.
+   or vice versa. Immediately after that mention, insert a citation marker using the exact
+   "id:" value given with that note below — e.g. [[note:study_notes:3fa85f64-5717-4562-b3fc-2c963f66afa6]].
+   Only use an id exactly as given in the PERSONAL NOTES section; never invent one. These
+   markers are stripped out and rendered as clickable links before the user sees the answer,
+   so don't explain or describe them.
 3. If personal notes were provided but none are actually relevant to this question, ignore
    them silently — don't mention their absence.
 4. If the topic isn't found on wol.jw.org, say so clearly.
@@ -172,13 +202,16 @@ ${notesContext ? `\nPERSONAL NOTES that may be relevant to this question:\n\n${n
       messages.push({ role: 'assistant', content: data.content });
 
       if (data.stop_reason === 'end_turn' || data.stop_reason === 'max_tokens') {
-        const answer = data.content
+        const rawAnswer = data.content
           .filter((b) => b.type === 'text')
           .map((b) => b.text)
           .join('\n')
           .trim();
 
-        if (answer) return finish({ answer, notesUsed: notesContext ? true : false });
+        if (rawAnswer) {
+          const { cleaned, references } = extractNoteReferences(rawAnswer, notes);
+          return finish({ answer: cleaned, references });
+        }
         throw new Error(`No answer text returned (stop_reason: ${data.stop_reason})`);
       }
 
