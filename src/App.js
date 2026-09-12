@@ -9,9 +9,17 @@ import './App.css';
 
 // Attaches the current Supabase session's access token so server-side API
 // routes can verify the caller is logged in (checked in api/search.js and
-// api/calendar-push.js) — the anon key alone won't be enough once RLS is on.
+// api/calendar-push.js) — the anon key alone won't be enough now that RLS is on.
 async function authHeader() {
-  const { data } = await supabase.auth.getSession();
+  let { data } = await supabase.auth.getSession();
+  // If the session sat idle long enough (tab backgrounded, laptop asleep)
+  // that the token is expired or about to be, force a refresh rather than
+  // send a stale one — the background auto-refresh timer isn't reliable
+  // across long idle periods.
+  if (data.session && data.session.expires_at * 1000 < Date.now() + 60000) {
+    const refreshed = await supabase.auth.refreshSession();
+    if (refreshed.data.session) data = refreshed.data;
+  }
   return data.session ? { Authorization: `Bearer ${data.session.access_token}` } : {};
 }
 
@@ -331,7 +339,7 @@ function ContactCard({ contact, onClick }) {
   );
 }
 
-function StudyLogForm({ entry, onSave, onClose, onDelete }) {
+function StudyLogForm({ entry, onSave, onClose, onDelete, onCalendarWarning }) {
   const [form, setForm] = useState({
     log_date: entry?.log_date || new Date().toISOString().split('T')[0],
     scripture_ref: entry?.scripture_ref || '',
@@ -341,28 +349,29 @@ function StudyLogForm({ entry, onSave, onClose, onDelete }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
+  // Throws on failure — the caller decides whether that should block the
+  // save or just surface a warning. Previously this only checked resp.ok
+  // implicitly (via calData.eventId), so an error response like a 401 was
+  // silently ignored: no thrown exception, no warning, nothing.
   const pushToCalendar = async (savedEntry) => {
-    try {
-      const resp = await fetch('/api/calendar-push', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
-        body: JSON.stringify({
-          action: savedEntry.calendar_event_id ? 'update' : 'create',
-          eventId: savedEntry.calendar_event_id,
-          event: {
-            summary: savedEntry.topic || savedEntry.scripture_ref || 'Study',
-            description: [savedEntry.scripture_ref, savedEntry.notes].filter(Boolean).join('\n\n'),
-            date: savedEntry.log_date,
-          },
-        }),
-      });
-      const calData = await resp.json();
-      if (calData.eventId && calData.eventId !== savedEntry.calendar_event_id) {
-        await supabase.from('study_log').update({ calendar_event_id: calData.eventId }).eq('id', savedEntry.id);
-        savedEntry.calendar_event_id = calData.eventId;
-      }
-    } catch (calErr) {
-      console.warn('Calendar push failed:', calErr);
+    const resp = await fetch('/api/calendar-push', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
+      body: JSON.stringify({
+        action: savedEntry.calendar_event_id ? 'update' : 'create',
+        eventId: savedEntry.calendar_event_id,
+        event: {
+          summary: savedEntry.topic || savedEntry.scripture_ref || 'Study',
+          description: [savedEntry.scripture_ref, savedEntry.notes].filter(Boolean).join('\n\n'),
+          date: savedEntry.log_date,
+        },
+      }),
+    });
+    const calData = await resp.json();
+    if (!resp.ok) throw new Error(calData.error || `Calendar sync failed (${resp.status})`);
+    if (calData.eventId && calData.eventId !== savedEntry.calendar_event_id) {
+      await supabase.from('study_log').update({ calendar_event_id: calData.eventId }).eq('id', savedEntry.id);
+      savedEntry.calendar_event_id = calData.eventId;
     }
   };
 
@@ -378,7 +387,15 @@ function StudyLogForm({ entry, onSave, onClose, onDelete }) {
         ({ data, error: err } = await supabase.from('study_log').insert(form).select().single());
       }
       if (err) throw err;
-      await pushToCalendar(data);
+      // A calendar sync failure shouldn't block the save (the entry is
+      // already recorded either way) — but it needs to be visible, not
+      // swallowed, so surface it to the parent instead of failing silently.
+      try {
+        await pushToCalendar(data);
+      } catch (calErr) {
+        console.warn('Calendar push failed:', calErr);
+        onCalendarWarning?.(`Saved, but calendar sync failed: ${calErr.message}`);
+      }
       onSave(data);
     } catch (err) {
       setError(err.message);
@@ -458,6 +475,7 @@ function StudyLogView() {
   const [showForm, setShowForm] = useState(false);
   const [editingEntry, setEditingEntry] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
+  const [calendarWarning, setCalendarWarning] = useState('');
 
   const loadEntries = useCallback(async () => {
     setLoading(true);
@@ -481,13 +499,18 @@ function StudyLogView() {
   const handleDelete = async (entry) => {
     if (entry.calendar_event_id) {
       try {
-        await fetch('/api/calendar-push', {
+        const resp = await fetch('/api/calendar-push', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
           body: JSON.stringify({ action: 'delete', eventId: entry.calendar_event_id }),
         });
+        if (!resp.ok) {
+          const calData = await resp.json().catch(() => ({}));
+          throw new Error(calData.error || `Calendar delete failed (${resp.status})`);
+        }
       } catch (calErr) {
         console.warn('Calendar delete failed:', calErr);
+        setCalendarWarning(`Deleted, but removing the calendar event failed: ${calErr.message}`);
       }
     }
     await supabase.from('study_log').delete().eq('id', entry.id);
@@ -503,6 +526,15 @@ function StudyLogView() {
         <h2>Study Log <span className="count-badge">{entries.length}</span></h2>
         <button className="btn-primary small" onClick={() => setShowForm(true)}><Plus size={14} /> Log Study</button>
       </div>
+
+      {calendarWarning && (
+        <div className="error-msg" style={{ marginBottom: 12 }}>
+          <AlertCircle size={14} /> {calendarWarning}
+          <button type="button" className="icon-btn small" style={{ marginLeft: 'auto' }} onClick={() => setCalendarWarning('')}>
+            <X size={14} />
+          </button>
+        </div>
+      )}
 
       {loading ? <div className="loading">Loading study log...</div> :
         entries.length === 0 ? (
@@ -535,7 +567,8 @@ function StudyLogView() {
         <Modal title={editingEntry ? 'Edit Study Entry' : 'Log Study'} onClose={() => { setShowForm(false); setEditingEntry(null); }}>
           <StudyLogForm entry={editingEntry} onSave={handleSave}
             onClose={() => { setShowForm(false); setEditingEntry(null); }}
-            onDelete={entry => { setShowForm(false); setEditingEntry(null); setConfirmDelete(entry); }} />
+            onDelete={entry => { setShowForm(false); setEditingEntry(null); setConfirmDelete(entry); }}
+            onCalendarWarning={setCalendarWarning} />
         </Modal>
       )}
 
