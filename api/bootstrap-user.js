@@ -24,13 +24,24 @@ export default async function handler(req, res) {
   const admin = createClient(supabaseUrl, serviceKey);
 
   const { data: existing, error: listErr } = await admin.auth.admin.listUsers();
-  if (listErr) return res.status(500).json({ error: listErr.message });
+  if (listErr) {
+    console.error('listUsers error:', listErr);
+    return res.status(500).json({ error: listErr.message, details: JSON.stringify(listErr, Object.getOwnPropertyNames(listErr)) });
+  }
   if (existing.users.length > 0) {
     return res.status(403).json({ error: 'A user already exists — this bootstrap endpoint only ever creates the first one.' });
   }
 
   const { data, error } = await admin.auth.admin.createUser({ email, password, email_confirm: true });
-  if (error) return res.status(500).json({ error: error.message });
+  if (error) {
+    console.error('createUser error:', error);
+    return res.status(500).json({
+      error: error.message || 'Unknown error',
+      status: error.status,
+      code: error.code,
+      details: JSON.stringify(error, Object.getOwnPropertyNames(error)),
+    });
+  }
 
   return res.status(200).json({ ok: true, userId: data.user.id });
 }
