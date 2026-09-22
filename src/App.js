@@ -785,7 +785,7 @@ function parseHashtags(text) {
 async function postBearNotes(notes) {
   const resp = await fetch('/api/bear-import', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
     body: JSON.stringify({ notes }),
   });
   const data = await resp.json();
