@@ -16,10 +16,13 @@ Vercel serverless functions (`/api/*`) alongside the static frontend.
 - **Study Notes** — a read-only archive of notes exported from JW Library, imported
   from a `.jwlibrary` backup file. Scripture references are hyperlinked to
   [wol.jw.org](https://wol.jw.org).
-- **Bear notes** — a read-only mirror of notes from the [Bear](https://bear.app) app
-  (e.g. convention/assembly talk notes), pushed in from an iOS Shortcut. Scripture
-  references inside `==highlighted==` text are parsed out automatically.
-- **Search** — one search box across both JW Library notes and Bear notes, plus an AI
+- **Notes** — a Markdown note editor (talk/convention notes, etc.) with a Write/Preview
+  toggle, tags, and a bulk-upload button for `.md` files exported from [Bear](https://bear.app)
+  or elsewhere. Scripture references inside `==highlighted==` text are parsed out and
+  linked to [wol.jw.org](https://wol.jw.org) automatically. Stored in the same table
+  Bear notes have always used, so notes written here and notes imported from Bear
+  live side by side.
+- **Search** — one search box across both JW Library notes and Notes, plus an AI
   research assistant (Claude) that answers the same question using [wol.jw.org](https://wol.jw.org)
   and any of your own matching notes, citing which is which. Supports follow-up questions.
 - **Trades** — for the public talk coordinator: tracks which congregation has confirmed
@@ -161,37 +164,50 @@ Safe to re-run: rows are upserted on `trade_month`. If you're setting this up fr
 (no prior doc to migrate), skip this script — the Trades tab starts empty and you
 fill it in as congregations confirm.
 
-## Importing Bear notes
+## Notes: writing directly vs. importing from Bear
 
-Bear's notes database only lives on-device — there's no API and nothing this app can
-poll from a server. Two ways to get a note in, both landing in the same `bear_notes`
-table and both read-only (nothing is ever written back to Bear):
+The **Notes** tab is a full Markdown editor — click **New Note**, write in Markdown
+(headings, `**bold**`, `*italic*`, `` `code` ``, lists, links), toggle **Preview** to
+see it rendered, and wrap any scripture reference in `==like this==` to have it
+highlighted and auto-linked to [wol.jw.org](https://wol.jw.org) once saved. This is
+the normal way to take notes going forward — no Bear needed at all.
 
-### Paste it in (recommended for occasional notes)
+If you still use [Bear](https://bear.app) (e.g. on a device where that's more
+convenient) or have existing Bear notes to bring in, three ways to get them into the
+same table, all read-only from this app's side (nothing is ever written back to Bear):
 
-The **Search** tab has an **Add Note** button. Open your note in Bear, select all
-the text and copy it (Bear's editor is plain text with Markdown formatting, so a
-plain copy already includes the raw `==highlight==` markup around anything you
-highlighted), paste it into the box, and save. The title defaults to the note's
-first line if left blank, and tags default to any `#hashtags` found in the text.
-Scripture references wrapped in `==...==` (i.e. anything you highlighted in Bear)
-are auto-detected and linked. Good for the "a few notes every few months" case —
-no setup required.
+### Paste it in
 
-### iOS Shortcut (for frequent notes)
+Open your note in Bear, select all the text and copy it (Bear's editor is plain text
+with Markdown formatting, so a plain copy already includes the raw `==highlight==`
+markup around anything you highlighted), then use **New Note** in the Notes tab and
+paste it into the content box. Title defaults to the first line, tags default to any
+`#hashtags` found in the text, if left blank.
 
-If you add Bear notes often enough that pasting each one in gets tedious, a
-Shortcut can automate it: search Bear notes by tag, pull their title/content/tags/
-dates, and POST them as a batch to `/api/bear-import`:
+### Upload files
+
+Export notes from Bear as Markdown (`.md`) files, then use the **Upload Files**
+button in the Notes tab to select multiple at once — title comes from each
+filename, tags from `#hashtags` in the content. Good for a one-time bulk migration
+of an existing Bear library.
+
+### iOS Shortcut (for ongoing frequent notes)
+
+If you keep writing in Bear often enough that the above gets tedious, a Shortcut can
+automate it: search Bear notes by tag, pull their title/content/tags/dates, and POST
+them as a batch to `/api/bear-import`:
 ```json
 { "notes": [ { "id": "...", "title": "...", "content": "...", "tags": [...], "created": "...", "modified": "..." } ] }
 ```
 `content` needs to be the plain Markdown text (not HTML) for `==highlight==`
 scripture detection to work, and `id` should be something stable (Bear's own note
-identifier) so re-running the Shortcut upserts instead of duplicating. Bear's exact
-action names vary by version (look for something like "Search Notes" and "Get
-Contents of Bear Notes") — ask Claude to help you build this against your specific
-version if you want to set it up.
+identifier) so re-running the Shortcut upserts instead of duplicating. Since the
+Shortcut has no logged-in Supabase session to authenticate with, it must send
+`Authorization: Bearer <BEAR_IMPORT_TOKEN>` (see the env vars table above) — the
+in-app Notes tab instead sends your login session automatically. Bear's exact action
+names vary by version (look for something like "Search Notes" and "Get Contents of
+Bear Notes") — ask Claude to help you build this against your specific version if
+you want to set it up.
 
 ## Calendar sync
 

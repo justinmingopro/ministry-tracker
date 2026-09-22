@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { marked } from 'marked';
 import { supabase } from './supabaseClient';
 import {
   Search, Plus, ChevronLeft, BookOpen, MapPin, Phone,
@@ -6,6 +7,16 @@ import {
   Filter, ChevronDown, AlertCircle, Download, Upload, Sparkles, LogOut
 } from 'lucide-react';
 import './App.css';
+
+// Live-preview only: turns ==highlighted== spans into <mark>, then renders
+// the rest as normal Markdown. The real scripture_refs (used for actual
+// clickable wol.jw.org links once saved) are parsed server-side in
+// api/bear-import.js — this is just visual feedback while writing.
+function renderNoteMarkdown(content) {
+  if (!content?.trim()) return '';
+  const withHighlights = content.replace(/==([^=\n]+)==/g, '<mark>$1</mark>');
+  return marked.parse(withHighlights);
+}
 
 // Attaches the current Supabase session's access token so server-side API
 // routes can verify the caller is logged in (checked in api/search.js and
@@ -725,11 +736,11 @@ function StudyNotesView({ highlightNote, onHighlighted }) {
 
 function SourceBadge({ source }) {
   return source === 'bear'
-    ? <span className="source-badge bear">Bear</span>
+    ? <span className="source-badge bear">Note</span>
     : <span className="source-badge jw">JW Library</span>;
 }
 
-function SearchResultCard({ result }) {
+function SearchResultCard({ result, onEdit }) {
   const [expanded, setExpanded] = useState(false);
   const isBear = result.source === 'bear';
   const refs = isBear
@@ -744,6 +755,9 @@ function SearchResultCard({ result }) {
     <div className="visit-card">
       <div className="visit-header">
         <SourceBadge source={result.source} />
+        {isBear && onEdit && (
+          <button type="button" className="icon-btn small" title="Edit in Notes" onClick={onEdit}><Edit2 size={13} /></button>
+        )}
       </div>
       {result.title && <div className="visit-field"><strong>{result.title}</strong></div>}
       {refs.length > 0 && (
@@ -838,16 +852,17 @@ function BearBulkUploadButton({ onDone }) {
   );
 }
 
-function AddBearNoteForm({ onSave, onClose }) {
-  const [title, setTitle] = useState('');
-  const [content, setContent] = useState('');
-  const [tags, setTags] = useState('');
+function NoteEditor({ note, onSave, onClose, onDelete }) {
+  const [title, setTitle] = useState(note?.title || '');
+  const [content, setContent] = useState(note?.content || '');
+  const [tags, setTags] = useState(note?.tags?.join(', ') || '');
+  const [mode, setMode] = useState('write');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
   const handleSubmit = async e => {
     e.preventDefault();
-    if (!content.trim()) { setError('Paste the note content first'); return; }
+    if (!content.trim()) { setError('Write something first'); return; }
     setSaving(true);
     setError('');
     try {
@@ -858,11 +873,11 @@ function AddBearNoteForm({ onSave, onClose }) {
         : parseHashtags(content);
 
       await postBearNotes([{
-        id: bearNoteIdFromTitle(finalTitle),
+        id: note?.bear_note_id || bearNoteIdFromTitle(finalTitle),
         title: finalTitle,
         content: content.trim(),
         tags: parsedTags,
-        created: new Date().toISOString(),
+        created: note?.note_created_at || new Date().toISOString(),
         modified: new Date().toISOString(),
       }]);
       onSave();
@@ -877,23 +892,166 @@ function AddBearNoteForm({ onSave, onClose }) {
     <form onSubmit={handleSubmit} className="form">
       {error && <div className="error-msg"><AlertCircle size={14} /> {error}</div>}
       <div className="form-row">
-        <label>Title (optional — uses the note's first line if left blank)</label>
+        <label>Title (optional — uses the first line if left blank)</label>
         <input value={title} onChange={e => setTitle(e.target.value)} placeholder="e.g. Circuit Overseer visit talk" />
       </div>
       <div className="form-row">
-        <label>Note content</label>
-        <textarea value={content} onChange={e => setContent(e.target.value)} rows={10}
-          placeholder={'Open the note in Bear, select all the text, copy, and paste it here.\n\nIf you highlighted scriptures in Bear, they’ll already be wrapped like ==Rev 21:3,4== when pasted — those get auto-detected and linked.'} />
+        <div className="editor-tabs">
+          <button type="button" className={`editor-tab-btn ${mode === 'write' ? 'active' : ''}`} onClick={() => setMode('write')}>Write</button>
+          <button type="button" className={`editor-tab-btn ${mode === 'preview' ? 'active' : ''}`} onClick={() => setMode('preview')}>Preview</button>
+        </div>
+        {mode === 'write' ? (
+          <textarea value={content} onChange={e => setContent(e.target.value)} rows={12}
+            placeholder={'Write in Markdown: **bold**, *italic*, `code`, - lists, [links](url).\n\nWrap scripture in ==Rev 21:3,4== to highlight it — those get auto-linked to wol.jw.org once saved.'} />
+        ) : (
+          <div className="note-preview" dangerouslySetInnerHTML={{
+            __html: renderNoteMarkdown(content) || '<p class="note-preview-empty">Nothing to preview yet.</p>',
+          }} />
+        )}
       </div>
       <div className="form-row">
-        <label>Tags (optional, comma-separated — auto-detected from #hashtags in the note if left blank)</label>
+        <label>Tags (optional, comma-separated — auto-detected from #hashtags if left blank)</label>
         <input value={tags} onChange={e => setTags(e.target.value)} placeholder="e.g. talk, convention" />
       </div>
       <div className="form-actions">
+        {note && onDelete && (
+          <button type="button" className="btn-danger" style={{ marginRight: 'auto' }} onClick={() => onDelete(note)}>
+            <Trash2 size={14} />
+          </button>
+        )}
         <button type="button" className="btn-secondary" onClick={onClose}>Cancel</button>
-        <button type="submit" className="btn-primary" disabled={saving}>{saving ? 'Saving...' : 'Save Note'}</button>
+        <button type="submit" className="btn-primary" disabled={saving}>{saving ? 'Saving...' : note ? 'Save Changes' : 'Save Note'}</button>
       </div>
     </form>
+  );
+}
+
+function NoteCard({ note, onClick }) {
+  const preview = note.content?.replace(/[#*`_~>]/g, '').replace(/==/g, '').replace(/\s+/g, ' ').trim();
+  return (
+    <div className="visit-card note-card" onClick={onClick}>
+      <div className="visit-header">
+        <span className="visit-date"><BookOpen size={13} /> {note.title || 'Untitled'}</span>
+      </div>
+      {preview && <div className="visit-notes">{preview.length > 160 ? preview.slice(0, 160) + '…' : preview}</div>}
+      {note.tags?.length > 0 && (
+        <div className="note-tags">
+          {note.tags.map(t => <span key={t} className="note-tag">{t}</span>)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function NotesView({ highlightNote, onHighlighted }) {
+  const [notes, setNotes] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
+  const [tagFilter, setTagFilter] = useState('all');
+  const [tags, setTags] = useState([]);
+  const [showEditor, setShowEditor] = useState(false);
+  const [editingNote, setEditingNote] = useState(null);
+  const [confirmDelete, setConfirmDelete] = useState(null);
+  const noteRefs = useRef({});
+
+  const loadNotes = useCallback(async () => {
+    setLoading(true);
+    const { data } = await supabase.from('bear_notes').select('*').order('note_modified_at', { ascending: false });
+    if (data) {
+      setNotes(data);
+      setTags([...new Set(data.flatMap(n => n.tags || []))].sort());
+    }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { loadNotes(); }, [loadNotes]);
+
+  useEffect(() => {
+    if (!highlightNote || loading) return;
+    const el = noteRefs.current[highlightNote.id];
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    const t = setTimeout(() => onHighlighted?.(), 2500);
+    return () => clearTimeout(t);
+  }, [highlightNote, loading, onHighlighted]);
+
+  const openEditor = (note) => { setEditingNote(note); setShowEditor(true); };
+  const closeEditor = () => { setShowEditor(false); setEditingNote(null); };
+
+  const handleDelete = async (note) => {
+    await supabase.from('bear_notes').delete().eq('id', note.id);
+    setNotes(prev => prev.filter(n => n.id !== note.id));
+    setTags([...new Set(notes.filter(n => n.id !== note.id).flatMap(n => n.tags || []))].sort());
+    setConfirmDelete(null);
+  };
+
+  const filtered = notes.filter(n => {
+    const q = search.toLowerCase();
+    const matchSearch = !search || n.title?.toLowerCase().includes(q) || n.content?.toLowerCase().includes(q);
+    const matchTag = tagFilter === 'all' || (n.tags || []).includes(tagFilter);
+    return matchSearch && matchTag;
+  });
+
+  return (
+    <>
+      <div className="filters-bar">
+        <div className="search-wrap">
+          <Search size={16} className="search-icon" />
+          <input className="search-input" placeholder="Search your notes..." value={search} onChange={e => setSearch(e.target.value)} />
+          {search && <button className="icon-btn small" onClick={() => setSearch('')}><X size={14} /></button>}
+        </div>
+        {tags.length > 0 && (
+          <select className="filter-select" value={tagFilter} onChange={e => setTagFilter(e.target.value)}>
+            <option value="all">All Tags</option>
+            {tags.map(t => <option key={t} value={t}>{t}</option>)}
+          </select>
+        )}
+        <BearBulkUploadButton onDone={loadNotes} />
+        <button className="btn-primary small" onClick={() => openEditor(null)}><Plus size={14} /> New Note</button>
+      </div>
+      <main className="contacts-list">
+        {loading ? (
+          <div className="loading">Loading notes...</div>
+        ) : filtered.length === 0 ? (
+          <div className="empty-state">
+            <BookOpen size={48} />
+            <h3>{notes.length === 0 ? 'No notes yet' : 'No results found'}</h3>
+            <p>{notes.length === 0 ? 'Write your first note, or upload files exported from Bear.' : 'Try a different search or tag.'}</p>
+            {notes.length === 0 && <button className="btn-primary" onClick={() => openEditor(null)}><Plus size={16} /> Write First Note</button>}
+          </div>
+        ) : (
+          <div className="visits-list">
+            {filtered.map(n => (
+              <div key={n.id} ref={el => { noteRefs.current[n.id] = el; }} className={highlightNote?.id === n.id ? 'note-highlight' : ''}>
+                <NoteCard note={n} onClick={() => openEditor(n)} />
+              </div>
+            ))}
+          </div>
+        )}
+      </main>
+
+      {showEditor && (
+        <Modal title={editingNote ? 'Edit Note' : 'New Note'} onClose={closeEditor}>
+          <NoteEditor
+            note={editingNote}
+            onSave={() => { closeEditor(); loadNotes(); }}
+            onClose={closeEditor}
+            onDelete={(note) => { setShowEditor(false); setConfirmDelete(note); }}
+          />
+        </Modal>
+      )}
+
+      {confirmDelete && (
+        <Modal title="Confirm Delete" onClose={() => setConfirmDelete(null)}>
+          <div className="form">
+            <p style={{ marginBottom: 16 }}>Delete "{confirmDelete.title}"? This cannot be undone.</p>
+            <div className="form-actions">
+              <button className="btn-secondary" onClick={() => setConfirmDelete(null)}>Cancel</button>
+              <button className="btn-danger" onClick={() => handleDelete(confirmDelete)}>Delete</button>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </>
   );
 }
 
@@ -1288,13 +1446,11 @@ function TradesView() {
   );
 }
 
-function SearchView({ highlightNote, onHighlighted, onNavigateToNote }) {
+function SearchView({ onNavigateToNote }) {
   const [query, setQuery] = useState('');
   const [askedQuestion, setAskedQuestion] = useState('');
   const [results, setResults] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [showAddNote, setShowAddNote] = useState(false);
-  const resultRefs = useRef({});
 
   const performSearch = useCallback(async (q) => {
     if (!q) { setResults(null); setAskedQuestion(''); return; }
@@ -1321,23 +1477,6 @@ function SearchView({ highlightNote, onHighlighted, onNavigateToNote }) {
     performSearch(query.trim());
   };
 
-  // Jumping here from a Bear-note reference chip — Bear notes have no
-  // dedicated browsing tab, so land on Search pre-searched for that note.
-  useEffect(() => {
-    if (highlightNote) {
-      setQuery(highlightNote.title);
-      performSearch(highlightNote.title);
-    }
-  }, [highlightNote, performSearch]);
-
-  useEffect(() => {
-    if (!highlightNote || !results) return;
-    const el = resultRefs.current[`bear-${highlightNote.id}`];
-    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    const t = setTimeout(() => onHighlighted?.(), 2500);
-    return () => clearTimeout(t);
-  }, [results, highlightNote, onHighlighted]);
-
   return (
     <>
       <div className="filters-bar">
@@ -1355,8 +1494,6 @@ function SearchView({ highlightNote, onHighlighted, onNavigateToNote }) {
             </button>
           )}
         </form>
-        <BearBulkUploadButton onDone={() => { if (query.trim()) runSearch(); }} />
-        <button className="btn-primary small" onClick={() => setShowAddNote(true)}><Plus size={14} /> Add Note</button>
       </div>
       <main className="contacts-list">
         <AIAnswerCard question={askedQuestion} onNavigateToNote={onNavigateToNote} />
@@ -1380,26 +1517,15 @@ function SearchView({ highlightNote, onHighlighted, onNavigateToNote }) {
               {results.length} note result{results.length !== 1 ? 's' : ''}
             </p>
             {results.map(r => (
-              <div
+              <SearchResultCard
                 key={`${r.source}-${r.id}`}
-                ref={el => { resultRefs.current[`${r.source}-${r.id}`] = el; }}
-                className={highlightNote && r.source === 'bear' && highlightNote.id === r.id ? 'note-highlight' : ''}
-              >
-                <SearchResultCard result={r} />
-              </div>
+                result={r}
+                onEdit={r.source === 'bear' ? () => onNavigateToNote({ table: 'bear_notes', id: r.id, title: r.title }) : null}
+              />
             ))}
           </div>
         )}
       </main>
-
-      {showAddNote && (
-        <Modal title="Add Bear Note" onClose={() => setShowAddNote(false)}>
-          <AddBearNoteForm
-            onSave={() => { setShowAddNote(false); if (query.trim()) runSearch(); }}
-            onClose={() => setShowAddNote(false)}
-          />
-        </Modal>
-      )}
     </>
   );
 }
@@ -1418,11 +1544,11 @@ function MinistryTracker() {
   const [exporting, setExporting] = useState(false);
   const [highlightNote, setHighlightNote] = useState(null); // { table, id, title } | null
 
-  // A note-reference chip in the research assistant's answer calls this to
-  // jump to that note — study_notes lives in its own tab, bear_notes only
-  // shows up via Search, so route to whichever actually has it.
+  // A note-reference chip in the research assistant's answer (or the Edit
+  // button on a Bear-sourced search result) calls this to jump to that note
+  // — study_notes lives in its own tab, bear_notes in the Notes tab.
   const handleNavigateToNote = (ref) => {
-    setTab(ref.table === 'study_notes' ? 'studyNotes' : 'search');
+    setTab(ref.table === 'study_notes' ? 'studyNotes' : 'notes');
     setHighlightNote(ref);
   };
 
@@ -1554,6 +1680,7 @@ function MinistryTracker() {
         <button className={`tab-btn ${tab === 'contacts' ? 'active' : ''}`} onClick={() => setTab('contacts')}>Contacts</button>
         <button className={`tab-btn ${tab === 'studyLog' ? 'active' : ''}`} onClick={() => setTab('studyLog')}>Study Log</button>
         <button className={`tab-btn ${tab === 'studyNotes' ? 'active' : ''}`} onClick={() => setTab('studyNotes')}>Study Notes</button>
+        <button className={`tab-btn ${tab === 'notes' ? 'active' : ''}`} onClick={() => setTab('notes')}>Notes</button>
         <button className={`tab-btn ${tab === 'search' ? 'active' : ''}`} onClick={() => setTab('search')}>Search</button>
         <button className={`tab-btn ${tab === 'trades' ? 'active' : ''}`} onClick={() => setTab('trades')}>Trades</button>
       </div>
@@ -1608,12 +1735,14 @@ function MinistryTracker() {
           onHighlighted={() => setHighlightNote(null)}
         />
       )}
-      {tab === 'search' && (
-        <SearchView
+      {tab === 'notes' && (
+        <NotesView
           highlightNote={highlightNote?.table === 'bear_notes' ? highlightNote : null}
           onHighlighted={() => setHighlightNote(null)}
-          onNavigateToNote={handleNavigateToNote}
         />
+      )}
+      {tab === 'search' && (
+        <SearchView onNavigateToNote={handleNavigateToNote} />
       )}
       {tab === 'trades' && <TradesView />}
     </div>
