@@ -138,19 +138,30 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
+  const supabaseUrl = process.env.REACT_APP_SUPABASE_URL;
+
+  // Two ways in: the non-interactive iOS Shortcut has no Supabase session to
+  // present, so it authenticates with a static shared token instead; the
+  // in-app "Add Note"/"Upload Files" buttons run in the browser with a real
+  // logged-in session, so they authenticate the normal way. Either is fine —
+  // this just can't be a bare, unauthenticated POST anyone could hit, since
+  // the write below uses the service-role key and bypasses RLS.
+  const auth = req.headers.authorization || '';
   const importToken = process.env.BEAR_IMPORT_TOKEN;
-  if (importToken) {
-    const auth = req.headers.authorization || '';
-    if (auth !== `Bearer ${importToken}`) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
+  const hasValidToken = importToken && auth === `Bearer ${importToken}`;
+  let hasValidSession = false;
+  if (!hasValidToken && auth.startsWith('Bearer ') && supabaseUrl && process.env.REACT_APP_SUPABASE_ANON_KEY) {
+    const anon = createClient(supabaseUrl, process.env.REACT_APP_SUPABASE_ANON_KEY);
+    const { data, error } = await anon.auth.getUser(auth.slice(7));
+    hasValidSession = !error && !!data.user;
+  }
+  if (!hasValidToken && !hasValidSession) {
+    return res.status(401).json({ error: 'Unauthorized' });
   }
 
-  const supabaseUrl = process.env.REACT_APP_SUPABASE_URL;
-  // Uses the service-role key, not the anon key: this endpoint is hit by a
-  // non-interactive iOS Shortcut with no Supabase user session to present,
-  // so once RLS requires an authenticated session the anon key alone can no
-  // longer write here. BEAR_IMPORT_TOKEN above is what actually gates access.
+  // Uses the service-role key, not the anon key: the Shortcut path above has
+  // no Supabase user session to satisfy RLS with, so this bypasses RLS
+  // entirely — the auth check above is what actually gates access.
   const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!supabaseUrl || !supabaseKey) {
     return res.status(500).json({ error: 'Supabase not configured (missing SUPABASE_SERVICE_ROLE_KEY)' });
