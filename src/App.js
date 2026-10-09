@@ -362,6 +362,8 @@ function ContactCard({ contact, onClick }) {
 function StudyLogForm({ entry, onSave, onClose, onDelete, onCalendarWarning }) {
   const [form, setForm] = useState({
     log_date: entry?.log_date || new Date().toISOString().split('T')[0],
+    start_time: entry?.start_time?.slice(0, 5) || '',
+    end_time: entry?.end_time?.slice(0, 5) || '',
     scripture_ref: entry?.scripture_ref || '',
     topic: entry?.topic || '',
     notes: entry?.notes || '',
@@ -384,6 +386,9 @@ function StudyLogForm({ entry, onSave, onClose, onDelete, onCalendarWarning }) {
           summary: savedEntry.topic || savedEntry.scripture_ref || 'Study',
           description: [savedEntry.scripture_ref, savedEntry.notes].filter(Boolean).join('\n\n'),
           date: savedEntry.log_date,
+          startTime: savedEntry.start_time || null,
+          endTime: savedEntry.end_time || null,
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         },
       }),
     });
@@ -397,14 +402,23 @@ function StudyLogForm({ entry, onSave, onClose, onDelete, onCalendarWarning }) {
 
   const handleSubmit = async e => {
     e.preventDefault();
+    if ((form.start_time && !form.end_time) || (!form.start_time && form.end_time)) {
+      setError('Enter both a start and end time, or leave both blank');
+      return;
+    }
+    if (form.start_time && form.end_time && form.end_time <= form.start_time) {
+      setError('End time must be after start time');
+      return;
+    }
     setSaving(true);
     setError('');
     try {
+      const payload = { ...form, start_time: form.start_time || null, end_time: form.end_time || null };
       let data, err;
       if (entry?.id) {
-        ({ data, error: err } = await supabase.from('study_log').update(form).eq('id', entry.id).select().single());
+        ({ data, error: err } = await supabase.from('study_log').update(payload).eq('id', entry.id).select().single());
       } else {
-        ({ data, error: err } = await supabase.from('study_log').insert(form).select().single());
+        ({ data, error: err } = await supabase.from('study_log').insert(payload).select().single());
       }
       if (err) throw err;
       // A calendar sync failure shouldn't block the save (the entry is
@@ -430,6 +444,16 @@ function StudyLogForm({ entry, onSave, onClose, onDelete, onCalendarWarning }) {
       <div className="form-row">
         <label>Date</label>
         <input type="date" value={form.log_date} onChange={e => setForm(f => ({ ...f, log_date: e.target.value }))} />
+      </div>
+      <div className="form-row-split">
+        <div className="form-row">
+          <label>Start Time (optional)</label>
+          <input type="time" value={form.start_time} onChange={e => setForm(f => ({ ...f, start_time: e.target.value }))} />
+        </div>
+        <div className="form-row">
+          <label>End Time (optional)</label>
+          <input type="time" value={form.end_time} onChange={e => setForm(f => ({ ...f, end_time: e.target.value }))} />
+        </div>
       </div>
       <div className="form-row">
         <label>Scripture</label>
@@ -474,16 +498,27 @@ function groupStudyEntriesByMonth(entries) {
     .map(g => ({ ...g, entries: [...g.entries].sort((a, b) => a.log_date.localeCompare(b.log_date)) }));
 }
 
+function formatTimeOfDay(t) {
+  if (!t) return '';
+  const [h, m] = t.split(':').map(Number);
+  const period = h >= 12 ? 'PM' : 'AM';
+  const h12 = h % 12 || 12;
+  return `${h12}:${String(m).padStart(2, '0')} ${period}`;
+}
+
 function StudyLogBoardCard({ entry, onClick }) {
   const day = Number(entry.log_date.split('-')[2]);
   const label = entry.scripture_ref || entry.topic || 'Untitled';
+  const timeRange = entry.start_time && entry.end_time
+    ? `${formatTimeOfDay(entry.start_time)}–${formatTimeOfDay(entry.end_time)}`
+    : null;
   return (
     <button
       type="button"
       className={`study-card ${entry.scripture_ref ? 'has-scripture' : ''}`}
       onClick={onClick}
     >
-      <span className="study-card-day">{day}</span>
+      <span className="study-card-day">{day}{timeRange ? ` · ${timeRange}` : ''}</span>
       <span className="study-card-text">{label}</span>
     </button>
   );

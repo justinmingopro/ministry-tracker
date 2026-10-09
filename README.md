@@ -41,6 +41,7 @@ in the Supabase SQL Editor, **in order**, from the project root:
 2. `supabase-schema-study.sql` — study log + JW Library study notes
 3. `supabase-schema-bear.sql` — Bear notes
 4. `supabase-schema-pubtalk.sql` — public talk trades
+5. `supabase-schema-study-times.sql` — optional start/end time on study log entries
 
 ### 2. Environment variables
 
@@ -217,3 +218,9 @@ calendar named `JW/Ministry` in the Calendar app (or set
 `ICLOUD_STUDY_CALENDAR_NAME` to whatever you name it) before logging your first
 study entry, or the push will fail with a "calendar not found" error listing the
 calendars it *did* find on your account.
+
+Entries with both a start and end time become timed calendar events instead of
+all-day ones — the browser's own IANA timezone (e.g. `America/Denver`) is sent
+along with each save and embedded as the event's `TZID`, so it shows up at the
+right wall-clock time without the app needing to know your timezone up front.
+Leave either time blank to keep the entry an all-day event, same as before.
