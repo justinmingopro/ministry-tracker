@@ -53,10 +53,20 @@ function addDays(dateStr, days) {
   return d.toISOString().slice(0, 10);
 }
 
-function buildIcs({ uid, summary, description, date }) {
-  const dtStart = date.replace(/-/g, '');
-  const dtEnd = addDays(date, 1).replace(/-/g, '');
+function buildIcs({ uid, summary, description, date, startTime, endTime, timezone }) {
   const dtStamp = new Date().toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
+  const dateCompact = date.replace(/-/g, '');
+
+  let dtStartLine, dtEndLine;
+  if (startTime && endTime) {
+    const tz = timezone || 'UTC';
+    dtStartLine = `DTSTART;TZID=${tz}:${dateCompact}T${startTime.replace(/:/g, '')}00`;
+    dtEndLine = `DTEND;TZID=${tz}:${dateCompact}T${endTime.replace(/:/g, '')}00`;
+  } else {
+    dtStartLine = `DTSTART;VALUE=DATE:${dateCompact}`;
+    dtEndLine = `DTEND;VALUE=DATE:${addDays(date, 1).replace(/-/g, '')}`;
+  }
+
   return [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
@@ -64,8 +74,8 @@ function buildIcs({ uid, summary, description, date }) {
     'BEGIN:VEVENT',
     `UID:${uid}`,
     `DTSTAMP:${dtStamp}`,
-    `DTSTART;VALUE=DATE:${dtStart}`,
-    `DTEND;VALUE=DATE:${dtEnd}`,
+    dtStartLine,
+    dtEndLine,
     `SUMMARY:${escapeIcsText(summary)}`,
     description ? `DESCRIPTION:${escapeIcsText(description)}` : null,
     'END:VEVENT',
@@ -111,7 +121,15 @@ export default async function handler(req, res) {
 
     const uid =
       action === 'create' ? `study-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` : eventId;
-    const iCalString = buildIcs({ uid, summary: event.summary, description: event.description, date: event.date });
+    const iCalString = buildIcs({
+      uid,
+      summary: event.summary,
+      description: event.description,
+      date: event.date,
+      startTime: event.startTime,
+      endTime: event.endTime,
+      timezone: event.timezone,
+    });
     const url = `${calendar.url}${uid}.ics`;
 
     const resp =
