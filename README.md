@@ -24,7 +24,10 @@ Vercel serverless functions (`/api/*`) alongside the static frontend.
   live side by side.
 - **Search** — one search box across both JW Library notes and Notes, plus an AI
   research assistant (Claude) that answers the same question using [wol.jw.org](https://wol.jw.org)
-  and any of your own matching notes, citing which is which. Supports follow-up questions.
+  and any of your own matching notes, citing which is which. Supports follow-up
+  questions, and every session (question, answer, and any follow-ups) is saved —
+  the **History** button lists past sessions and lets you reopen one to keep
+  asking follow-ups on it, or delete it.
 - **Trades** — for the public talk coordinator: tracks which congregation has confirmed
   a bilateral month trade, and when. Always shows a rolling ~12 months ahead so an
   unconfirmed upcoming month is visible before it becomes urgent. Individual speaker
@@ -42,6 +45,7 @@ in the Supabase SQL Editor, **in order**, from the project root:
 3. `supabase-schema-bear.sql` — Bear notes
 4. `supabase-schema-pubtalk.sql` — public talk trades
 5. `supabase-schema-study-times.sql` — optional start/end time on study log entries
+6. `supabase-schema-research.sql` — research assistant session history
 
 ### 2. Environment variables
 
