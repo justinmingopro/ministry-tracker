@@ -1164,9 +1164,36 @@ function NoteReferenceChips({ references, onNavigateToNote }) {
   );
 }
 
+function FollowUpInput({ value, onChange, onSubmit, disabled }) {
+  const taRef = useRef(null);
+
+  useEffect(() => {
+    const ta = taRef.current;
+    if (!ta) return;
+    ta.style.height = 'auto';
+    ta.style.height = `${ta.scrollHeight}px`;
+  }, [value]);
+
+  return (
+    <textarea
+      ref={taRef}
+      className="followup-textarea"
+      rows={1}
+      placeholder="Ask a follow-up..."
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSubmit(); }
+      }}
+      disabled={disabled}
+    />
+  );
+}
+
 function AIAnswerCard({ question, onNavigateToNote }) {
   const [thread, setThread] = useState([]);
   const [followUp, setFollowUp] = useState('');
+  const [pendingQuestion, setPendingQuestion] = useState('');
   const [status, setStatus] = useState('idle'); // idle | loading | done | error
   const [error, setError] = useState('');
   const askedFor = useRef(null);
@@ -1175,6 +1202,7 @@ function AIAnswerCard({ question, onNavigateToNote }) {
     if (!question || askedFor.current === question) return;
     askedFor.current = question;
     setThread([]);
+    setPendingQuestion(question);
     setStatus('loading');
     setError('');
     callResearchAPI(question, [])
@@ -1192,6 +1220,7 @@ function AIAnswerCard({ question, onNavigateToNote }) {
     const q = followUp.trim();
     if (!q || status === 'loading') return;
     setFollowUp('');
+    setPendingQuestion(q);
     setStatus('loading');
     setError('');
     try {
@@ -1206,44 +1235,38 @@ function AIAnswerCard({ question, onNavigateToNote }) {
 
   if (status === 'idle') return null;
 
-  const latest = thread[thread.length - 1];
-
   return (
     <div className="ai-answer-card">
       <div className="ai-answer-header"><Sparkles size={13} /> Research Assistant — wol.jw.org &amp; your notes</div>
-      {thread.slice(0, -1).map((turn, i) => (
-        <div key={i} style={{ marginBottom: 14, paddingBottom: 14, borderBottom: '1px solid var(--border)' }}>
-          <div style={{ fontSize: 13, color: 'var(--text-muted)', fontStyle: 'italic', marginBottom: 6 }}>↪ {turn.q}</div>
+      {thread.map((turn, i) => (
+        <div key={i} style={i < thread.length - 1 ? { marginBottom: 14, paddingBottom: 14, borderBottom: '1px solid var(--border)' } : undefined}>
+          {/* The very first question is already visible in the search bar above —
+              redundant to repeat it here unless there's more history below it. */}
+          {!(i === 0 && thread.length === 1) && (
+            <div style={{ fontSize: 13, color: 'var(--text-muted)', fontStyle: 'italic', marginBottom: 6 }}>↪ {turn.q}</div>
+          )}
           <div className="ai-answer-body" dangerouslySetInnerHTML={{ __html: turn.htmlA }} />
           <NoteReferenceChips references={turn.references} onNavigateToNote={onNavigateToNote} />
         </div>
       ))}
       {status === 'loading' && (
-        <div className="loading" style={{ padding: '8px 0' }}>Researching wol.jw.org and your notes...</div>
+        <>
+          {thread.length > 0 && (
+            <div style={{ fontSize: 13, color: 'var(--text-muted)', fontStyle: 'italic', margin: '14px 0 6px', paddingTop: 14, borderTop: '1px solid var(--border)' }}>↪ {pendingQuestion}</div>
+          )}
+          <div className="loading" style={{ padding: '8px 0' }}>Researching wol.jw.org and your notes...</div>
+        </>
       )}
       {status === 'error' && (
         <div className="error-msg"><AlertCircle size={14} /> {error}</div>
       )}
-      {latest && status !== 'loading' && (
-        <>
-          {thread.length > 1 && (
-            <div style={{ fontSize: 13, color: 'var(--text-muted)', fontStyle: 'italic', marginBottom: 6 }}>↪ {latest.q}</div>
-          )}
-          <div className="ai-answer-body" dangerouslySetInnerHTML={{ __html: latest.htmlA }} />
-          <NoteReferenceChips references={latest.references} onNavigateToNote={onNavigateToNote} />
-          <div className="ai-followup-row">
-            <div className="search-wrap" style={{ flex: 1 }}>
-              <input
-                className="search-input"
-                placeholder="Ask a follow-up..."
-                value={followUp}
-                onChange={(e) => setFollowUp(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); askFollowUp(); } }}
-              />
-            </div>
-            <button className="btn-primary small" onClick={askFollowUp} disabled={!followUp.trim()}>Ask</button>
+      {thread.length > 0 && status !== 'loading' && (
+        <div className="ai-followup-row">
+          <div className="search-wrap" style={{ flex: 1 }}>
+            <FollowUpInput value={followUp} onChange={setFollowUp} onSubmit={askFollowUp} />
           </div>
-        </>
+          <button className="btn-primary small" onClick={askFollowUp} disabled={!followUp.trim()}>Ask</button>
+        </div>
       )}
     </div>
   );
