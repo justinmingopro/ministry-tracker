@@ -4,7 +4,7 @@ import { supabase } from './supabaseClient';
 import {
   Search, Plus, ChevronLeft, BookOpen, MapPin, Phone,
   User, Calendar, Tag, Edit2, Trash2, X, Sun, Moon,
-  Filter, ChevronDown, AlertCircle, Download, Upload, Sparkles, LogOut
+  Filter, ChevronDown, AlertCircle, Download, Upload, Sparkles, LogOut, History
 } from 'lucide-react';
 import './App.css';
 
@@ -1190,31 +1190,66 @@ function FollowUpInput({ value, onChange, onSubmit, disabled }) {
   );
 }
 
-function AIAnswerCard({ question, onNavigateToNote }) {
+function AIAnswerCard({ question, resumeSession, onResumed, onNavigateToNote }) {
   const [thread, setThread] = useState([]);
   const [followUp, setFollowUp] = useState('');
   const [pendingQuestion, setPendingQuestion] = useState('');
   const [status, setStatus] = useState('idle'); // idle | loading | done | error
   const [error, setError] = useState('');
+  const [isResumed, setIsResumed] = useState(false);
   const askedFor = useRef(null);
+  const resumedFor = useRef(null);
+  const sessionIdRef = useRef(null);
 
   useEffect(() => {
     if (!question || askedFor.current === question) return;
     askedFor.current = question;
+    sessionIdRef.current = null;
+    setIsResumed(false);
     setThread([]);
     setPendingQuestion(question);
     setStatus('loading');
     setError('');
     callResearchAPI(question, [])
-      .then(({ answer: rawA, references }) => {
+      .then(async ({ answer: rawA, references }) => {
         setThread([{ q: question, rawA, htmlA: formatAnswer(rawA), references }]);
         setStatus('done');
+        // Saving history is a nice-to-have, not core to the answer the user is
+        // waiting on — a failure here shouldn't surface as an error, just a
+        // quiet console note (the answer itself already succeeded).
+        try {
+          const { data, error: saveErr } = await supabase
+            .from('research_sessions')
+            .insert({ first_question: question, turns: [{ q: question, a: rawA, references }] })
+            .select('id')
+            .single();
+          if (saveErr) throw saveErr;
+          sessionIdRef.current = data.id;
+        } catch (saveErr) {
+          console.warn('Failed to save research session:', saveErr);
+        }
       })
       .catch((err) => {
         setError(err.message);
         setStatus('error');
       });
   }, [question]);
+
+  // Loading a past session from the History list — separate trigger from
+  // `question` above so it never fires a live API call, just hydrates state.
+  useEffect(() => {
+    if (!resumeSession || resumedFor.current === resumeSession.id) return;
+    resumedFor.current = resumeSession.id;
+    askedFor.current = resumeSession.first_question;
+    sessionIdRef.current = resumeSession.id;
+    setIsResumed(true);
+    setThread((resumeSession.turns || []).map((t) => ({
+      q: t.q, rawA: t.a, htmlA: formatAnswer(t.a), references: t.references || [],
+    })));
+    setStatus('done');
+    setError('');
+    onResumed?.();
+  }, [resumeSession, onResumed]);
 
   const askFollowUp = async () => {
     const q = followUp.trim();
@@ -1225,8 +1260,19 @@ function AIAnswerCard({ question, onNavigateToNote }) {
     setError('');
     try {
       const { answer: rawA, references } = await callResearchAPI(q, thread);
-      setThread((prev) => [...prev, { q, rawA, htmlA: formatAnswer(rawA), references }]);
+      const newThread = [...thread, { q, rawA, htmlA: formatAnswer(rawA), references }];
+      setThread(newThread);
       setStatus('done');
+      if (sessionIdRef.current) {
+        const { error: saveErr } = await supabase
+          .from('research_sessions')
+          .update({
+            turns: newThread.map((t) => ({ q: t.q, a: t.rawA, references: t.references })),
+            updated_at: new Date(),
+          })
+          .eq('id', sessionIdRef.current);
+        if (saveErr) console.warn('Failed to update research session:', saveErr);
+      }
     } catch (err) {
       setError(err.message);
       setStatus('error');
@@ -1241,8 +1287,9 @@ function AIAnswerCard({ question, onNavigateToNote }) {
       {thread.map((turn, i) => (
         <div key={i} style={i < thread.length - 1 ? { marginBottom: 14, paddingBottom: 14, borderBottom: '1px solid var(--border)' } : undefined}>
           {/* The very first question is already visible in the search bar above —
-              redundant to repeat it here unless there's more history below it. */}
-          {!(i === 0 && thread.length === 1) && (
+              redundant to repeat it here unless there's more history below it,
+              or this thread was loaded from History (search bar shows nothing). */}
+          {!(i === 0 && thread.length === 1 && !isResumed) && (
             <div style={{ fontSize: 13, color: 'var(--text-muted)', fontStyle: 'italic', marginBottom: 6 }}>↪ {turn.q}</div>
           )}
           <div className="ai-answer-body" dangerouslySetInnerHTML={{ __html: turn.htmlA }} />
@@ -1513,11 +1560,80 @@ function TradesView() {
   );
 }
 
+function ResearchHistoryList({ onSelect }) {
+  const [sessions, setSessions] = useState(null);
+  const [confirmDelete, setConfirmDelete] = useState(null);
+
+  useEffect(() => {
+    supabase.from('research_sessions').select('*').order('updated_at', { ascending: false }).limit(50)
+      .then(({ data }) => setSessions(data || []));
+  }, []);
+
+  const handleDelete = async (session) => {
+    await supabase.from('research_sessions').delete().eq('id', session.id);
+    setSessions((prev) => prev.filter((s) => s.id !== session.id));
+    setConfirmDelete(null);
+  };
+
+  if (sessions === null) return <div className="loading">Loading history...</div>;
+
+  if (sessions.length === 0) {
+    return (
+      <div className="empty-state">
+        <History size={48} />
+        <h3>No past sessions yet</h3>
+        <p>Questions you ask the research assistant will show up here.</p>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div className="visits-list">
+        {sessions.map((s) => (
+          <div key={s.id} className="visit-card note-card" onClick={() => onSelect(s)}>
+            <div className="visit-header">
+              <span className="visit-date">
+                <Sparkles size={13} />
+                {new Date(s.updated_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+              </span>
+              <div className="visit-actions">
+                <span className="count-badge">{s.turns.length}</span>
+                <button
+                  className="icon-btn small danger"
+                  onClick={(e) => { e.stopPropagation(); setConfirmDelete(s); }}
+                >
+                  <Trash2 size={13} />
+                </button>
+              </div>
+            </div>
+            <div className="visit-notes">{s.first_question}</div>
+          </div>
+        ))}
+      </div>
+
+      {confirmDelete && (
+        <Modal title="Confirm Delete" onClose={() => setConfirmDelete(null)}>
+          <div className="form">
+            <p style={{ marginBottom: 16 }}>Delete this research session? This cannot be undone.</p>
+            <div className="form-actions">
+              <button className="btn-secondary" onClick={() => setConfirmDelete(null)}>Cancel</button>
+              <button className="btn-danger" onClick={() => handleDelete(confirmDelete)}>Delete</button>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </>
+  );
+}
+
 function SearchView({ onNavigateToNote }) {
   const [query, setQuery] = useState('');
   const [askedQuestion, setAskedQuestion] = useState('');
   const [results, setResults] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+  const [resumeSession, setResumeSession] = useState(null);
 
   const performSearch = useCallback(async (q) => {
     if (!q) { setResults(null); setAskedQuestion(''); return; }
@@ -1561,9 +1677,15 @@ function SearchView({ onNavigateToNote }) {
             </button>
           )}
         </form>
+        <button className="btn-secondary small" onClick={() => setShowHistory(true)}><History size={14} /> History</button>
       </div>
       <main className="contacts-list">
-        <AIAnswerCard question={askedQuestion} onNavigateToNote={onNavigateToNote} />
+        <AIAnswerCard
+          question={askedQuestion}
+          resumeSession={resumeSession}
+          onResumed={() => setResumeSession(null)}
+          onNavigateToNote={onNavigateToNote}
+        />
         {loading ? (
           <div className="loading">Searching...</div>
         ) : results === null ? (
@@ -1593,6 +1715,12 @@ function SearchView({ onNavigateToNote }) {
           </div>
         )}
       </main>
+
+      {showHistory && (
+        <Modal title="Research History" onClose={() => setShowHistory(false)}>
+          <ResearchHistoryList onSelect={(s) => { setResumeSession(s); setShowHistory(false); }} />
+        </Modal>
+      )}
     </>
   );
 }
