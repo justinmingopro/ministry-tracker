@@ -176,6 +176,23 @@ body {
 
 .search-input::placeholder { color: var(--text-muted); }
 
+.followup-textarea {
+  flex: 1;
+  background: none;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font-size: 14px;
+  font-family: inherit;
+  line-height: 1.4;
+  resize: none;
+  overflow-y: auto;
+  max-height: 140px;
+  padding: 2px 0;
+}
+
+.followup-textarea::placeholder { color: var(--text-muted); }
+
 .filter-select {
   background: var(--surface2);
   border: 1px solid var(--border);
@@ -692,7 +709,7 @@ body {
 .ai-answer-body a { color: var(--accent); text-decoration: none; border-bottom: 1px solid rgba(124,106,240,0.35); }
 .ai-answer-body a:hover { border-color: var(--accent); }
 
-.ai-followup-row { display: flex; gap: 8px; margin-top: 12px; }
+.ai-followup-row { display: flex; align-items: flex-end; gap: 8px; margin-top: 12px; }
 
 .note-ref-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 
