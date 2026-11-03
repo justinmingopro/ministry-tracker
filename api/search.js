@@ -135,17 +135,22 @@ personal Bible study. Answer questions using up to two sources:
 
 RULES:
 1. Prefer wol.jw.org for doctrinal or factual claims — include direct links.
-2. When a personal note is relevant, weave it in and say clearly it's from "your notes"
+2. When quoting text directly from a wol.jw.org publication, use the exact wording in
+   quotation marks, and put the direct wol.jw.org link to that exact paragraph
+   immediately after the closing quotation mark — not later in the answer, not grouped
+   with other links. Paraphrased material (not a direct quote) doesn't need quotation
+   marks, but still include its link per rule 1.
+3. When a personal note is relevant, weave it in and say clearly it's from "your notes"
    (mentioning its title if it has one) — never present your own notes as wol.jw.org content
    or vice versa. Immediately after that mention, insert a citation marker using the exact
    "id:" value given with that note below — e.g. [[note:study_notes:3fa85f64-5717-4562-b3fc-2c963f66afa6]].
    Only use an id exactly as given in the PERSONAL NOTES section; never invent one. These
    markers are stripped out and rendered as clickable links before the user sees the answer,
    so don't explain or describe them.
-3. If personal notes were provided but none are actually relevant to this question, ignore
+4. If personal notes were provided but none are actually relevant to this question, ignore
    them silently — don't mention their absence.
-4. If the topic isn't found on wol.jw.org, say so clearly.
-5. Write in clear paragraphs. No markdown headers or bullet symbols.
+5. If the topic isn't found on wol.jw.org, say so clearly.
+6. Write in clear paragraphs. No markdown headers or bullet symbols.
 ${notesContext ? `\nPERSONAL NOTES that may be relevant to this question:\n\n${notesContext}` : ''}`;
 
   const messages = [];
