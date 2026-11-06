@@ -171,11 +171,15 @@ fill it in as congregations confirm.
 
 ## Notes: writing directly vs. importing from Bear
 
-The **Notes** tab is a full Markdown editor — click **New Note**, write in Markdown
-(headings, `**bold**`, `*italic*`, `` `code` ``, lists, links), toggle **Preview** to
-see it rendered, and wrap any scripture reference in `==like this==` to have it
-highlighted and auto-linked to [wol.jw.org](https://wol.jw.org) once saved. This is
-the normal way to take notes going forward — no Bear needed at all.
+The **Notes** tab is a full WYSIWYG editor — click **New Note** and a toolbar
+(bold, italic, underline, strikethrough, highlight, headings, lists, quote, link)
+formats text live as you type or paste, no separate preview step needed. Wrap any
+scripture reference in `==like this==` (or just click the highlighter button) to have
+it highlighted and auto-linked to [wol.jw.org](https://wol.jw.org) once saved. A
+**Markdown** tab next to **Format** shows/edits the same note as raw Markdown source
+(headings, `**bold**`, `*italic*`, `` `code` ``, lists, links, Bear's `~underline~`) —
+useful for bulk edits or pasting a block of text you don't want auto-formatted. This
+is the normal way to take notes going forward — no Bear needed at all.
 
 If you still use [Bear](https://bear.app) (e.g. on a device where that's more
 convenient) or have existing Bear notes to bring in, three ways to get them into the
@@ -186,8 +190,9 @@ same table, all read-only from this app's side (nothing is ever written back to 
 Open your note in Bear, select all the text and copy it (Bear's editor is plain text
 with Markdown formatting, so a plain copy already includes the raw `==highlight==`
 markup around anything you highlighted), then use **New Note** in the Notes tab and
-paste it into the content box. Title defaults to the first line, tags default to any
-`#hashtags` found in the text, if left blank.
+paste it into the content box — the editor detects plain-text Markdown on paste and
+formats it live rather than inserting literal asterisks/`==`. Title defaults to the
+first line, tags default to any `#hashtags` found in the text, if left blank.
 
 ### Upload files
 

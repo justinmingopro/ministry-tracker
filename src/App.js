@@ -1,31 +1,12 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { marked } from 'marked';
 import { supabase } from './supabaseClient';
 import {
   Search, Plus, ChevronLeft, BookOpen, MapPin, Phone,
   User, Calendar, Tag, Edit2, Trash2, X, Sun, Moon,
   Filter, ChevronDown, AlertCircle, Download, Upload, Sparkles, LogOut, History
 } from 'lucide-react';
+import RichNoteEditor from './RichNoteEditor';
 import './App.css';
-
-// Live-preview only: turns ==highlighted== spans into <mark>, then renders
-// the rest as normal Markdown. The real scripture_refs (used for actual
-// clickable wol.jw.org links once saved) are parsed server-side in
-// api/bear-import.js — this is just visual feedback while writing.
-function renderNoteMarkdown(content) {
-  if (!content?.trim()) return '';
-  const processed = content
-    .replace(/==([^=\n]+)==/g, '<mark>$1</mark>')
-    // Real strikethrough (double tilde) first, so it's fully consumed
-    // before the single-tilde rule below can misfire on half of a pair.
-    .replace(/~~([^~\n]+)~~/g, '<del>$1</del>')
-    // Bear's own convention: a single ~like this~ means underline, not
-    // strikethrough — marked's GFM tilde handling would otherwise treat
-    // it as strikethrough, which doesn't match what these notes meant
-    // in Bear.
-    .replace(/~([^~\n]+)~/g, '<u>$1</u>');
-  return marked.parse(processed);
-}
 
 // Attaches the current Supabase session's access token so server-side API
 // routes can verify the caller is logged in (checked in api/search.js and
@@ -60,10 +41,10 @@ function StatusBadge({ status }) {
   );
 }
 
-function Modal({ title, onClose, children }) {
+function Modal({ title, onClose, children, wide }) {
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" onClick={e => e.stopPropagation()}>
+      <div className={`modal ${wide ? 'modal-wide' : ''}`} onClick={e => e.stopPropagation()}>
         <div className="modal-header">
           <h2>{title}</h2>
           <button className="icon-btn" onClick={onClose}><X size={20} /></button>
@@ -900,7 +881,7 @@ function NoteEditor({ note, onSave, onClose, onDelete }) {
   const [title, setTitle] = useState(note?.title || '');
   const [content, setContent] = useState(note?.content || '');
   const [tags, setTags] = useState(note?.tags?.join(', ') || '');
-  const [mode, setMode] = useState('write');
+  const [mode, setMode] = useState('format');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -941,16 +922,14 @@ function NoteEditor({ note, onSave, onClose, onDelete }) {
       </div>
       <div className="form-row">
         <div className="editor-tabs">
-          <button type="button" className={`editor-tab-btn ${mode === 'write' ? 'active' : ''}`} onClick={() => setMode('write')}>Write</button>
-          <button type="button" className={`editor-tab-btn ${mode === 'preview' ? 'active' : ''}`} onClick={() => setMode('preview')}>Preview</button>
+          <button type="button" className={`editor-tab-btn ${mode === 'format' ? 'active' : ''}`} onClick={() => setMode('format')}>Format</button>
+          <button type="button" className={`editor-tab-btn ${mode === 'markdown' ? 'active' : ''}`} onClick={() => setMode('markdown')}>Markdown</button>
         </div>
-        {mode === 'write' ? (
-          <textarea value={content} onChange={e => setContent(e.target.value)} rows={12}
-            placeholder={'Write in Markdown: **bold**, *italic*, `code`, - lists, [links](url).\n\nWrap scripture in ==Rev 21:3,4== to highlight it — those get auto-linked to wol.jw.org once saved.'} />
+        {mode === 'format' ? (
+          <RichNoteEditor markdown={content} onChange={setContent} />
         ) : (
-          <div className="note-preview" dangerouslySetInnerHTML={{
-            __html: renderNoteMarkdown(content) || '<p class="note-preview-empty">Nothing to preview yet.</p>',
-          }} />
+          <textarea value={content} onChange={e => setContent(e.target.value)} rows={16} className="note-markdown-source"
+            placeholder={'Write in Markdown: **bold**, *italic*, `code`, - lists, [links](url).\n\nWrap scripture in ==Rev 21:3,4== to highlight it — those get auto-linked to wol.jw.org once saved.'} />
         )}
       </div>
       <div className="form-row">
@@ -1074,7 +1053,7 @@ function NotesView({ highlightNote, onHighlighted }) {
       </main>
 
       {showEditor && (
-        <Modal title={editingNote ? 'Edit Note' : 'New Note'} onClose={closeEditor}>
+        <Modal title={editingNote ? 'Edit Note' : 'New Note'} onClose={closeEditor} wide>
           <NoteEditor
             note={editingNote}
             onSave={() => { closeEditor(); loadNotes(); }}
