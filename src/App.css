@@ -66,6 +66,12 @@ body {
   color: var(--text);
   min-height: 100vh;
   transition: background var(--transition), color var(--transition);
+  /* Safety net: a long unbroken value in imported data (a pasted map link,
+     a run-on address) can still blow out a container's width somewhere we
+     haven't hardened — this stops that from ever scrolling the whole page
+     sideways, rather than relying on every single text container getting
+     word-wrapping exactly right. */
+  overflow-x: hidden;
 }
 
 /* App Layout */
@@ -280,7 +286,7 @@ body {
 
 .contact-card:hover {
   border-color: var(--accent);
-  box-shadow: 0 4px 20px rgba(108, 88, 224, 0.12);
+  box-shadow: 0 4px 20px rgba(var(--accent-rgb), 0.12);
   transform: translateY(-1px);
 }
 
@@ -319,14 +325,16 @@ body {
 
 .card-meta {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 5px;
   font-size: 12px;
   color: var(--text-muted);
   margin-top: 3px;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
-.card-meta svg { flex-shrink: 0; opacity: 0.7; }
+.card-meta svg { flex-shrink: 0; opacity: 0.7; margin-top: 1px; }
 
 /* Empty / Loading */
 .empty-state {
@@ -390,16 +398,17 @@ body {
   margin-bottom: 14px;
 }
 
-.contact-info { flex: 1; }
+.contact-info { flex: 1; min-width: 0; }
 .contact-info h1 { font-family: 'Lora', serif; font-size: 22px; font-weight: 700; margin-bottom: 8px; }
 
 .contact-meta {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 6px;
   font-size: 13px;
   color: var(--text-muted);
   margin-top: 6px;
+  overflow-wrap: anywhere;
 }
 
 .contact-notes-box {
@@ -411,6 +420,7 @@ body {
   color: var(--text-muted);
   margin-bottom: 20px;
   line-height: 1.6;
+  overflow-wrap: anywhere;
 }
 
 /* Visits */
@@ -477,6 +487,8 @@ body {
   color: var(--text-muted);
   margin-bottom: 6px;
   line-height: 1.5;
+  overflow-wrap: anywhere;
+  min-width: 0;
 }
 
 .visit-field svg { flex-shrink: 0; margin-top: 2px; }
