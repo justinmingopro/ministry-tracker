@@ -121,7 +121,7 @@ function ContactForm({ contact, onSave, onClose }) {
       </div>
       <div className="form-actions">
         <button type="button" className="btn-secondary" onClick={onClose}>Cancel</button>
-        <button type="submit" className="btn-primary" disabled={saving}>{saving ? 'Saving...' : contact ? 'Save Changes' : 'Add Contact'}</button>
+        <button type="submit" className="btn-primary" disabled={saving}>{saving ? 'Saving...' : contact ? 'Save Changes' : 'Add Return Visit'}</button>
       </div>
     </form>
   );
@@ -295,7 +295,7 @@ function ContactDetail({ contact, onBack, onUpdate, darkMode }) {
       )}
 
       {showEditContact && (
-        <Modal title="Edit Contact" onClose={() => setShowEditContact(false)}>
+        <Modal title="Edit Return Visit" onClose={() => setShowEditContact(false)}>
           <ContactForm contact={contact} onSave={updated => { onUpdate(updated); setShowEditContact(false); }} onClose={() => setShowEditContact(false)} />
         </Modal>
       )}
@@ -1874,7 +1874,7 @@ function MinistryTracker() {
           <BookOpen size={22} className="header-icon" />
           <div>
             <h1 className="app-title">Ministry Tracker</h1>
-            <p className="app-subtitle">{contacts.length} contact{contacts.length !== 1 ? 's' : ''}</p>
+            <p className="app-subtitle">{contacts.length} return visit{contacts.length !== 1 ? 's' : ''}</p>
           </div>
         </div>
         <div className="header-right">
@@ -1904,15 +1904,15 @@ function MinistryTracker() {
             <LogOut size={18} />
           </button>
           {tab === 'contacts' && (
-            <button className="btn-primary" onClick={() => setShowAddContact(true)}>
-              <Plus size={16} /> Add Contact
+            <button className="btn-primary header-add-btn" onClick={() => setShowAddContact(true)}>
+              <Plus size={16} /> <span>Add RV</span>
             </button>
           )}
         </div>
       </header>
 
       <div className="tabs-bar">
-        <button className={`tab-btn ${tab === 'contacts' ? 'active' : ''}`} onClick={() => setTab('contacts')}>Contacts</button>
+        <button className={`tab-btn ${tab === 'contacts' ? 'active' : ''}`} onClick={() => setTab('contacts')}>Return Visits</button>
         <button className={`tab-btn ${tab === 'studyLog' ? 'active' : ''}`} onClick={() => setTab('studyLog')}>Study Log</button>
         <button className={`tab-btn ${tab === 'studyNotes' ? 'active' : ''}`} onClick={() => setTab('studyNotes')}>Study Notes</button>
         <button className={`tab-btn ${tab === 'notes' ? 'active' : ''}`} onClick={() => setTab('notes')}>Notes</button>
@@ -1942,13 +1942,13 @@ function MinistryTracker() {
 
           <main className="contacts-list">
             {loading ? (
-              <div className="loading">Loading contacts...</div>
+              <div className="loading">Loading return visits...</div>
             ) : filtered.length === 0 ? (
               <div className="empty-state">
                 <User size={48} />
-                <h3>{contacts.length === 0 ? 'No contacts yet' : 'No results found'}</h3>
-                <p>{contacts.length === 0 ? 'Add your first return visit contact to get started.' : 'Try adjusting your search or filters.'}</p>
-                {contacts.length === 0 && <button className="btn-primary" onClick={() => setShowAddContact(true)}><Plus size={16} /> Add First Contact</button>}
+                <h3>{contacts.length === 0 ? 'No return visits yet' : 'No results found'}</h3>
+                <p>{contacts.length === 0 ? 'Add your first return visit to get started.' : 'Try adjusting your search or filters.'}</p>
+                {contacts.length === 0 && <button className="btn-primary" onClick={() => setShowAddContact(true)}><Plus size={16} /> Add First Return Visit</button>}
               </div>
             ) : (
               filtered.map(c => <ContactCard key={c.id} contact={c} onClick={setSelectedContact} />)
@@ -1956,7 +1956,7 @@ function MinistryTracker() {
           </main>
 
           {showAddContact && (
-            <Modal title="Add New Contact" onClose={() => setShowAddContact(false)}>
+            <Modal title="Add New Return Visit" onClose={() => setShowAddContact(false)}>
               <ContactForm onSave={handleContactSave} onClose={() => setShowAddContact(false)} />
             </Modal>
           )}
