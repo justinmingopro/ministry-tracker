@@ -46,6 +46,7 @@ in the Supabase SQL Editor, **in order**, from the project root:
 4. `supabase-schema-pubtalk.sql` — public talk trades
 5. `supabase-schema-study-times.sql` — optional start/end time on study log entries
 6. `supabase-schema-research.sql` — research assistant session history
+7. `supabase-schema-study-notes-search.sql` — server-side search support for Study Notes (needed once that table grows past Supabase's default per-request row cap, currently 13,000+ rows)
 
 ### 2. Environment variables
 

@@ -675,25 +675,68 @@ function StudyNoteCard({ note }) {
   );
 }
 
+// Notes loaded for plain browsing (no search/tag filter active) when there
+// are more than this many in the table — past this, we show only the most
+// recent page rather than trying to fetch (and render) the entire thing.
+const STUDY_NOTES_BROWSE_LIMIT = 300;
+const STUDY_NOTES_SEARCH_LIMIT = 300;
+
 function StudyNotesView({ highlightNote, onHighlighted }) {
   const [notes, setNotes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [tagFilter, setTagFilter] = useState('all');
   const [tags, setTags] = useState([]);
+  const [totalCount, setTotalCount] = useState(null);
   const noteRefs = useRef({});
 
-  const loadNotes = useCallback(async () => {
+  // The full tag list, across the whole table — not derived from `notes`,
+  // since at 13,000+ rows `notes` is only ever a page of the table, never
+  // everything, so tags on older notes would otherwise just be missing from
+  // the dropdown entirely.
+  useEffect(() => {
+    supabase.rpc('study_notes_distinct_tags').then(({ data }) => {
+      if (data) setTags(data.map(r => r.tag).filter(Boolean));
+    });
+  }, []);
+
+  // Runs the actual DB query for the current search/tag — this table is
+  // large enough (13,000+ rows) that Supabase/PostgREST's default per-request
+  // row cap silently truncates an unlimited `select('*')` to its newest
+  // rows, so search has to be a real server-side filter, not a client-side
+  // scan of whatever page happened to load.
+  const runQuery = useCallback(async (term, tag) => {
     setLoading(true);
-    const { data } = await supabase.from('study_notes').select('*').order('note_created_at', { ascending: false });
-    if (data) {
-      setNotes(data);
-      setTags([...new Set(data.flatMap(n => n.tags || []))].sort());
+    let query = supabase.from('study_notes').select('*', { count: 'exact' });
+    const t = term.trim();
+    if (t) {
+      const like = `%${t}%`;
+      query = query.or(`title.ilike.${like},content.ilike.${like},scripture_ref.ilike.${like},publication_ref.ilike.${like}`);
     }
+    if (tag !== 'all') query = query.contains('tags', [tag]);
+    const filtered = Boolean(t) || tag !== 'all';
+    query = query.order('note_created_at', { ascending: false })
+      .limit(filtered ? STUDY_NOTES_SEARCH_LIMIT : STUDY_NOTES_BROWSE_LIMIT);
+    const { data, count } = await query;
+    setNotes(data || []);
+    setTotalCount(count ?? null);
     setLoading(false);
   }, []);
 
-  useEffect(() => { loadNotes(); }, [loadNotes]);
+  // Debounced so typing doesn't fire a query per keystroke against 13,000+ rows.
+  useEffect(() => {
+    const t = setTimeout(() => runQuery(search, tagFilter), search ? 350 : 0);
+    return () => clearTimeout(t);
+  }, [search, tagFilter, runQuery]);
+
+  // A note jumped to via a research-assistant reference chip can be far
+  // outside whatever page is currently loaded — fetch it directly by id so
+  // the jump always lands, regardless of search/tag state or how old it is.
+  useEffect(() => {
+    if (!highlightNote || notes.some(n => n.id === highlightNote.id)) return;
+    supabase.from('study_notes').select('*').eq('id', highlightNote.id).single()
+      .then(({ data }) => { if (data) setNotes(prev => [data, ...prev]); });
+  }, [highlightNote, notes]);
 
   useEffect(() => {
     if (!highlightNote) return;
@@ -703,19 +746,7 @@ function StudyNotesView({ highlightNote, onHighlighted }) {
     return () => clearTimeout(t);
   }, [notes, highlightNote, onHighlighted]);
 
-  const filtered = notes.filter(n => {
-    // A note jumped to via a research-assistant reference chip always shows,
-    // regardless of whatever search/tag filter happens to be active — the
-    // point is to land on it, not have it hidden by an unrelated filter.
-    if (highlightNote && highlightNote.id === n.id) return true;
-    const q = search.toLowerCase();
-    const matchSearch = !search ||
-      n.content?.toLowerCase().includes(q) ||
-      n.scripture_ref?.toLowerCase().includes(q) ||
-      n.title?.toLowerCase().includes(q);
-    const matchTag = tagFilter === 'all' || (n.tags || []).includes(tagFilter);
-    return matchSearch && matchTag;
-  });
+  const showingPartial = !search && tagFilter === 'all' && totalCount > notes.length;
 
   return (
     <>
@@ -732,18 +763,23 @@ function StudyNotesView({ highlightNote, onHighlighted }) {
           </select>
         )}
       </div>
+      {showingPartial && (
+        <p className="list-hint">
+          Showing the {notes.length} most recent of {totalCount.toLocaleString()} notes — search above to reach older ones.
+        </p>
+      )}
       <main className="contacts-list">
         {loading ? (
           <div className="loading">Loading notes...</div>
-        ) : filtered.length === 0 ? (
+        ) : notes.length === 0 ? (
           <div className="empty-state">
             <BookOpen size={48} />
-            <h3>{notes.length === 0 ? 'No notes imported yet' : 'No results found'}</h3>
-            <p>{notes.length === 0 ? 'Import your JW Library notes to see them here.' : 'Try a different search or tag.'}</p>
+            <h3>{totalCount === 0 ? 'No notes imported yet' : 'No results found'}</h3>
+            <p>{totalCount === 0 ? 'Import your JW Library notes to see them here.' : 'Try a different search or tag.'}</p>
           </div>
         ) : (
           <div className="visits-list">
-            {filtered.map(n => (
+            {notes.map(n => (
               <div
                 key={n.id}
                 ref={el => { noteRefs.current[n.id] = el; }}
