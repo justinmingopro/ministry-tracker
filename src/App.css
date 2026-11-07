@@ -121,6 +121,8 @@ body {
   padding: 10px 20px 0;
   background: var(--header-bg);
   border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .tab-btn {
@@ -134,6 +136,8 @@ body {
   cursor: pointer;
   border-bottom: 2px solid transparent;
   transition: color var(--transition), border-color var(--transition);
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .tab-btn:hover { color: var(--text); }
@@ -916,11 +920,18 @@ body {
 
 /* Responsive */
 @media (max-width: 480px) {
-  .app-header { padding: 12px 16px; }
+  .app-header { padding: 12px 16px; flex-wrap: wrap; row-gap: 10px; }
+  .header-right { width: 100%; justify-content: flex-end; }
   .filters-bar { padding: 10px 16px; }
   .contacts-list { padding: 12px 16px; }
   .detail-view { padding: 12px 16px; }
   .contact-profile { flex-direction: column; align-items: center; text-align: center; }
   .contact-meta { justify-content: center; }
-  .btn-primary span { display: none; }
+}
+
+/* Extra-narrow phones (e.g. iPhone SE 1st-gen, 320px): even a full-width
+   header-right row is tight, so drop the header's primary-button label and
+   keep just its icon as a last resort. */
+@media (max-width: 360px) {
+  .header-add-btn span { display: none; }
 }

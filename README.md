@@ -9,7 +9,7 @@ Vercel serverless functions (`/api/*`) alongside the static frontend.
 
 ## Features
 
-- **Contacts** — return visit / Bible study contacts with status, territory, and a
+- **Return Visits** — return visit / Bible study contacts with status, territory, and a
   full visit history per person.
 - **Study Log** — a daily log of personal/family study, each entry pushed to an
   iCloud calendar (via CalDAV) so it shows up alongside everything else on your phone.
@@ -153,7 +153,7 @@ python scripts/import_trello.py return-visits.json personal-study.json --commit 
 
 Always review the dry-run preview first. In particular: archived (closed) Trello
 lists are imported as contacts with status `moved`, since Trello doesn't record why
-a list was archived — correct these individually in the Contacts tab afterward if
+a list was archived — correct these individually in the Return Visits tab afterward if
 some were actually "not interested" or "do not call" instead. Historical study log
 entries are **not** pushed to your iCloud calendar (unlike new entries logged
 through the app), to avoid retroactively flooding it with hundreds of events.
