@@ -16,8 +16,9 @@ Vercel serverless functions (`/api/*`) alongside the static frontend.
 - **Study Notes** — a read-only archive of notes exported from JW Library, imported
   from a `.jwlibrary` backup file. Scripture references are hyperlinked to
   [wol.jw.org](https://wol.jw.org).
-- **Notes** — a Markdown note editor (talk/convention notes, etc.) with a Write/Preview
-  toggle, tags, and a bulk-upload button for `.md` files exported from [Bear](https://bear.app)
+- **Notes** — a WYSIWYG Markdown note editor (talk/convention notes, etc.) with a
+  live-formatting toolbar (plus a raw Markdown tab), tags, and a bulk-upload button
+  for `.md` files exported from [Bear](https://bear.app)
   or elsewhere. Scripture references inside `==highlighted==` text are parsed out and
   linked to [wol.jw.org](https://wol.jw.org) automatically. Stored in the same table
   Bear notes have always used, so notes written here and notes imported from Bear
@@ -32,6 +33,9 @@ Vercel serverless functions (`/api/*`) alongside the static frontend.
   a bilateral month trade, and when. Always shows a rolling ~12 months ahead so an
   unconfirmed upcoming month is visible before it becomes urgent. Individual speaker
   scheduling still happens in NW Scheduler — this only tracks the month-level agreement.
+- **Appearance** — light/dark mode plus a choice of two warm, earth-tone color
+  palettes (Terracotta and Olive), switchable anytime from the two small dots in the
+  header next to the light/dark toggle. Your choice is remembered per device.
 
 ## Setup
 
