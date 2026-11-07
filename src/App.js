@@ -1742,6 +1742,7 @@ function SearchView({ onNavigateToNote }) {
 
 function MinistryTracker() {
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem('darkMode') !== 'false');
+  const [palette, setPalette] = useState(() => localStorage.getItem('palette') || 'terracotta');
   const [tab, setTab] = useState('contacts');
   const [contacts, setContacts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -1795,9 +1796,17 @@ function MinistryTracker() {
   };
 
   useEffect(() => {
-    document.body.className = darkMode ? 'dark' : 'light';
+    document.body.className = `${darkMode ? 'dark' : 'light'} palette-${palette}`;
     localStorage.setItem('darkMode', darkMode);
-  }, [darkMode]);
+    localStorage.setItem('palette', palette);
+    // Keep the PWA/Safari status-bar tint matching the actual page background
+    // instead of a fixed color baked into index.html at build time.
+    const themeColorTag = document.querySelector('meta[name="theme-color"]');
+    if (themeColorTag) {
+      const bg = getComputedStyle(document.body).getPropertyValue('--bg').trim();
+      if (bg) themeColorTag.setAttribute('content', bg);
+    }
+  }, [darkMode, palette]);
 
   const loadContacts = useCallback(async () => {
     setLoading(true);
@@ -1869,6 +1878,22 @@ function MinistryTracker() {
           </div>
         </div>
         <div className="header-right">
+          <div className="palette-picker" title="Color palette">
+            <button
+              type="button"
+              className={`palette-swatch palette-swatch-terracotta ${palette === 'terracotta' ? 'active' : ''}`}
+              onClick={() => setPalette('terracotta')}
+              aria-label="Terracotta palette"
+              title="Terracotta"
+            />
+            <button
+              type="button"
+              className={`palette-swatch palette-swatch-olive ${palette === 'olive' ? 'active' : ''}`}
+              onClick={() => setPalette('olive')}
+              aria-label="Olive palette"
+              title="Olive"
+            />
+          </div>
           <button className="icon-btn" onClick={handleExportBackup} disabled={exporting} title="Download a backup of all data as JSON">
             <Download size={18} />
           </button>
