@@ -73,7 +73,11 @@ For deployment (Vercel project env vars — not committed anywhere), also set:
 | `ICLOUD_APP_SPECIFIC_PASSWORD` | `/api/calendar-push` | an **app-specific** password from [appleid.apple.com](https://appleid.apple.com) → Sign-In and Security → App-Specific Passwords. Not your real Apple ID password, revocable anytime. |
 | `ICLOUD_STUDY_CALENDAR_NAME` | `/api/calendar-push` | must exactly match the calendar's display name in the Calendar app/iCloud. Defaults to `JW/Ministry`. |
 | `BEAR_IMPORT_TOKEN` | `/api/bear-import` | optional but recommended — a random string. If set, the Bear import endpoint requires `Authorization: Bearer <token>`; if unset, the endpoint accepts unauthenticated requests from anyone who finds the URL. |
-| `SUPABASE_SERVICE_ROLE_KEY` | `/api/bear-import` | **server-only, never `REACT_APP_`-prefixed** — from Supabase **Project Settings → API → service_role key** ("keep this secret"). Bypasses Row Level Security, so it's only used server-side for the one route (the iOS Shortcut import) that has no Supabase user session to authenticate with. |
+| `SUPABASE_SERVICE_ROLE_KEY` | `/api/bear-import`, `/api/jwlibrary-import` | **server-only, never `REACT_APP_`-prefixed** — from Supabase **Project Settings → API → service_role key** ("keep this secret"). Bypasses Row Level Security, so it's only used server-side for routes (the iOS Shortcut import, the JW Library cron import) that have no Supabase user session to authenticate with. |
+| `CRON_SECRET` | `/api/jwlibrary-import` | a random string. Vercel automatically sends it as `Authorization: Bearer <value>` on its own Cron Job-triggered requests once this is set — that's what stops anyone else from hitting the URL and triggering an import. See "Importing JW Library notes" below. |
+| `GOOGLE_SERVICE_ACCOUNT_EMAIL` | `/api/jwlibrary-import` | the `client_email` field from the service account JSON key described below. |
+| `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY` | `/api/jwlibrary-import` | the `private_key` field from that same JSON key, pasted as-is (its `\n` escapes are fine — the code unescapes them). |
+| `GOOGLE_DRIVE_JWLIBRARY_FOLDER_ID` | `/api/jwlibrary-import` | the Google Drive folder's id (the long string in its URL after `/folders/`) that holds your `.jwlibrary` backups. |
 
 ### 3. Security: login + Row Level Security
 
@@ -106,9 +110,61 @@ npm run build    # production build
 
 ## Importing JW Library notes
 
-`scripts/import_jwlibrary.py` reads a `.jwlibrary` backup file and upserts its notes
-into the `study_notes` table. No third-party dependencies (stdlib only), so it can
-run from a scheduled task without a `pip install` step.
+Both paths below read a `.jwlibrary` backup file and upsert its notes into the
+`study_notes` table, upserted on each note's JW Library GUID — safe to re-run, and
+notes deleted in JW Library are **not** deleted here (this is a one-way archive, not
+a live mirror).
+
+### Cloud-based (recommended) — no computer needs to be on
+
+`api/jwlibrary-import.js` is a Vercel Cron Job (runs daily at 15:00 UTC — see the
+`crons` entry in `vercel.json`) that pulls the most recently modified `.jwlibrary`
+file straight from a Google Drive folder and imports it, entirely in the cloud. This
+is the better option if JW Library only lives on an iPad/iPhone and there's no
+always-on Mac/PC to read a locally-synced backup folder from.
+
+**One-time setup:**
+
+1. **Pick (or create) a Google Drive folder** that will hold your `.jwlibrary`
+   backups — e.g. "JW Library Backups". After finishing a study session, use JW
+   Library's own backup/export feature, then save that file into this folder (the
+   iOS share sheet's "Save to Drive" option, or dragging it in from the Files app if
+   you have the Google Drive app installed and registered as a Files provider).
+2. **Create a Google Cloud service account** so the import can read that folder
+   without needing your own Google login each time:
+   - At [console.cloud.google.com](https://console.cloud.google.com), create a
+     project (or reuse one), then enable the **Google Drive API** for it.
+   - Under **IAM & Admin → Service Accounts**, create a new service account (any
+     name — its role/permissions here don't matter, since access comes from sharing
+     the Drive folder with it directly, not from any Cloud IAM role).
+   - Open the new service account → **Keys → Add Key → Create new key → JSON**, and
+     save the downloaded file somewhere safe. It contains a `client_email` and a
+     `private_key` — these become the `GOOGLE_SERVICE_ACCOUNT_EMAIL` and
+     `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY` env vars below.
+3. **Share the Drive folder with that service account**: right-click the folder in
+   Google Drive → **Share** → paste in the service account's `client_email` address
+   (it looks like an email but isn't one you can log into) → give it **Viewer**
+   access. Without this step the import will fail — creating the service account
+   alone grants it no access to anything.
+4. **Get the folder's id**: open the folder in Google Drive and copy the long string
+   at the end of its URL, after `/folders/` — that's `GOOGLE_DRIVE_JWLIBRARY_FOLDER_ID`.
+5. **Set the Vercel env vars** from the table above: `SUPABASE_SERVICE_ROLE_KEY`
+   (same one `/api/bear-import` uses), `CRON_SECRET` (any random string),
+   `GOOGLE_SERVICE_ACCOUNT_EMAIL`, `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY`, and
+   `GOOGLE_DRIVE_JWLIBRARY_FOLDER_ID`.
+
+After that, it just runs daily on its own — no app changes, no device needed. You
+can manually trigger a run to test it by sending a request with
+`Authorization: Bearer <your CRON_SECRET>` to `https://<your-app>/api/jwlibrary-import`;
+its JSON response reports the file it found and how many notes it extracted, or an
+error naming exactly what's misconfigured.
+
+### Local script — run manually or from your own scheduled task
+
+`scripts/import_jwlibrary.py` does the same job, reading a `.jwlibrary` file already
+sitting on disk — useful for a one-off manual import, or if you'd rather run this
+yourself on a Mac/PC than set up the cloud path above. No third-party dependencies
+(stdlib only), so it can run from a scheduled task without a `pip install` step.
 
 ```
 python scripts/import_jwlibrary.py [path-to-backup.jwlibrary]
@@ -116,7 +172,7 @@ python scripts/import_jwlibrary.py [path-to-backup.jwlibrary]
 
 - If no path is given, it uses the most recently modified `*.jwlibrary` file in
   `JWLIBRARY_BACKUP_DIR` (defaults to `~/iCloudDrive`) — convenient if JW Library is
-  set to back up there automatically.
+  set to back up there automatically, or if you've saved one there yourself.
 - Needs `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` (Project Settings → API →
   service_role, "keep this secret" — **not** the anon key), either as environment
   variables or in a `.env.local`/`.env` file in the repo root. The service-role key
@@ -128,10 +184,9 @@ python scripts/import_jwlibrary.py [path-to-backup.jwlibrary]
   it has `SUPABASE_SERVICE_ROLE_KEY` in its environment — a scheduled task that only
   had the old `SUPABASE_ANON_KEY` will fail every run with no visible error unless
   you check its logs, so notes can go stale for weeks without anything in the app
-  itself indicating a problem.
-- Safe to re-run: notes are upserted on their JW Library GUID, so re-imports update
-  existing rows instead of duplicating them. Notes deleted in JW Library are **not**
-  deleted here — this is a one-way archive, not a live mirror.
+  itself indicating a problem, and a scheduled task that stops running at all (e.g.
+  the computer was off or asleep) will leave no trace anywhere either — worth an
+  occasional manual check that it's still actually running.
 
 ## Importing from Trello (one-time migration)
 

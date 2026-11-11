@@ -1,5 +1,9 @@
 {
   "functions": {
-    "api/search.js": { "maxDuration": 300 }
-  }
+    "api/search.js": { "maxDuration": 300 },
+    "api/jwlibrary-import.js": { "maxDuration": 300 }
+  },
+  "crons": [
+    { "path": "/api/jwlibrary-import", "schedule": "0 15 * * *" }
+  ]
 }
