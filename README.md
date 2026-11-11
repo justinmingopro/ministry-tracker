@@ -117,8 +117,18 @@ python scripts/import_jwlibrary.py [path-to-backup.jwlibrary]
 - If no path is given, it uses the most recently modified `*.jwlibrary` file in
   `JWLIBRARY_BACKUP_DIR` (defaults to `~/iCloudDrive`) — convenient if JW Library is
   set to back up there automatically.
-- Needs `SUPABASE_URL`/`SUPABASE_ANON_KEY` (or the `REACT_APP_`-prefixed names),
-  either as environment variables or in a `.env.local`/`.env` file in the repo root.
+- Needs `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` (Project Settings → API →
+  service_role, "keep this secret" — **not** the anon key), either as environment
+  variables or in a `.env.local`/`.env` file in the repo root. The service-role key
+  is required because this script has no interactive Supabase login to satisfy Row
+  Level Security's `authenticated`-only policy on `study_notes` — the anon key alone
+  is silently rejected by the database once RLS is on (same reasoning as
+  `api/bear-import.js`'s non-interactive Shortcut path). If you have a recurring
+  task (cron, `launchd`, Windows Task Scheduler) set up to run this daily, make sure
+  it has `SUPABASE_SERVICE_ROLE_KEY` in its environment — a scheduled task that only
+  had the old `SUPABASE_ANON_KEY` will fail every run with no visible error unless
+  you check its logs, so notes can go stale for weeks without anything in the app
+  itself indicating a problem.
 - Safe to re-run: notes are upserted on their JW Library GUID, so re-imports update
   existing rows instead of duplicating them. Notes deleted in JW Library are **not**
   deleted here — this is a one-way archive, not a live mirror.
