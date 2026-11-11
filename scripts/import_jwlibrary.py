@@ -12,9 +12,14 @@ lands): notes are upserted on their JW Library Guid, so re-imports update
 existing rows instead of duplicating them. Notes deleted in JW Library are
 NOT deleted here — this is a one-way archive, not a mirror.
 
-Requires SUPABASE_URL and SUPABASE_ANON_KEY, either as environment variables
-or in a .env.local / .env file in this script's directory (REACT_APP_-prefixed
-names are also recognized, since that's what the React app uses).
+Requires SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY, either as environment
+variables or in a .env.local / .env file in this script's directory. The
+service-role key (Project Settings -> API -> service_role, "keep this
+secret") is required, not the anon key: Row Level Security on study_notes
+only grants writes to the "authenticated" role, and this script has no
+interactive Supabase login to satisfy that with, so the anon key alone is
+silently rejected by the database. This mirrors how api/bear-import.js
+authenticates its own non-interactive (iOS Shortcut) import path.
 
 No third-party dependencies — stdlib only, so no pip install is needed before
 running this from a scheduled task.
@@ -64,9 +69,16 @@ def load_env():
                 k, v = line.split("=", 1)
                 env.setdefault(k.strip(), v.strip())
     url = env.get("SUPABASE_URL") or env.get("REACT_APP_SUPABASE_URL")
-    key = env.get("SUPABASE_ANON_KEY") or env.get("REACT_APP_SUPABASE_ANON_KEY")
+    key = env.get("SUPABASE_SERVICE_ROLE_KEY")
     if not url or not key:
-        sys.exit("Missing SUPABASE_URL/SUPABASE_ANON_KEY (checked env vars and .env.local/.env in the repo root)")
+        if env.get("SUPABASE_ANON_KEY") or env.get("REACT_APP_SUPABASE_ANON_KEY"):
+            sys.exit(
+                "Missing SUPABASE_SERVICE_ROLE_KEY. Row Level Security on study_notes "
+                "requires it for this script now (the anon key alone is rejected) — add "
+                "it from Project Settings -> API -> service_role in your Supabase "
+                "dashboard. See the README's 'Importing JW Library notes' section."
+            )
+        sys.exit("Missing SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY (checked env vars and .env.local/.env in the repo root)")
     return url.rstrip("/"), key
 
 
