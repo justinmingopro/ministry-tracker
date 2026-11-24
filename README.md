@@ -29,6 +29,10 @@ Vercel serverless functions (`/api/*`) alongside the static frontend.
   questions, and every session (question, answer, and any follow-ups) is saved —
   the **History** button lists past sessions and lets you reopen one to keep
   asking follow-ups on it, or delete it.
+- **Letters** — an archive of PDF letters/instructions (e.g. from the jw.org hub for
+  elders), searchable by title, tags, your own description, and the letter's own text
+  (extracted automatically on upload). Click one to view it inline, no downloading
+  and reopening a separate app each time you need to find something in it.
 - **Trades** — for the public talk coordinator: tracks which congregation has confirmed
   a bilateral month trade, and when. Always shows a rolling ~12 months ahead so an
   unconfirmed upcoming month is visible before it becomes urgent. Individual speaker
@@ -51,6 +55,7 @@ in the Supabase SQL Editor, **in order**, from the project root:
 5. `supabase-schema-study-times.sql` — optional start/end time on study log entries
 6. `supabase-schema-research.sql` — research assistant session history
 7. `supabase-schema-study-notes-search.sql` — server-side search support for Study Notes (needed once that table grows past Supabase's default per-request row cap, currently 13,000+ rows)
+8. `supabase-schema-letters.sql` — the Letters tab's table and its Storage bucket
 
 ### 2. Environment variables
 
@@ -288,6 +293,25 @@ in-app Notes tab instead sends your login session automatically. Bear's exact ac
 names vary by version (look for something like "Search Notes" and "Get Contents of
 Bear Notes") — ask Claude to help you build this against your specific version if
 you want to set it up.
+
+## Letters
+
+The **Letters** tab stores PDFs of letters/instructions (e.g. the kind sent to bodies
+of elders, downloadable from the jw.org hub) so they're searchable and viewable
+in-app instead of needing to go back to the hub each time. There's no automated way
+to pull these from the hub — click **Upload Letter(s)**, pick the PDF(s) you've
+already downloaded, and the file is stored in a private Supabase Storage bucket
+(`letters`) with a matching row in the `letters` table. Title defaults to the
+filename (editable), and tags/a description/the date on the letter are all optional.
+
+Right after upload, the PDF's own text is extracted server-side
+(`/api/letters-extract-text`, using [`pdf-parse`](https://www.npmjs.com/package/pdf-parse))
+and saved alongside it, so the search box matches what a letter actually says, not
+just its title — this happens in the background and never blocks the upload itself;
+if it fails for some reason (a scanned/image-only PDF with no selectable text, for
+instance), the letter is still there and viewable, just not full-text searchable.
+Clicking a letter opens it in an inline PDF viewer alongside its editable
+title/tags/description/date, with delete and "open in new tab" options.
 
 ## Calendar sync
 

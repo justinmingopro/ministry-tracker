@@ -3,7 +3,7 @@ import { supabase } from './supabaseClient';
 import {
   Search, Plus, ChevronLeft, BookOpen, MapPin, Phone,
   User, Calendar, Tag, Edit2, Trash2, X, Sun, Moon,
-  Filter, ChevronDown, AlertCircle, Download, Upload, Sparkles, LogOut, History
+  Filter, ChevronDown, AlertCircle, Download, Upload, Sparkles, LogOut, History, FileText
 } from 'lucide-react';
 import RichNoteEditor from './RichNoteEditor';
 import './App.css';
@@ -1114,6 +1114,276 @@ function NotesView({ highlightNote, onHighlighted }) {
   );
 }
 
+function LetterCard({ letter, onClick }) {
+  return (
+    <div className="visit-card note-card" onClick={onClick}>
+      <div className="visit-header">
+        <span className="visit-date"><FileText size={13} /> {letter.title}</span>
+        {letter.letter_date && (
+          <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+            {new Date(`${letter.letter_date}T00:00:00`).toLocaleDateString()}
+          </span>
+        )}
+      </div>
+      {letter.description && (
+        <div className="visit-notes">
+          {letter.description.length > 160 ? letter.description.slice(0, 160) + '…' : letter.description}
+        </div>
+      )}
+      {letter.tags?.length > 0 && (
+        <div className="note-tags">
+          {letter.tags.map(t => <span key={t} className="note-tag">{t}</span>)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LetterUploadButton({ onDone }) {
+  const inputRef = useRef(null);
+  const [uploading, setUploading] = useState(false);
+  const [result, setResult] = useState(null);
+
+  const handleFiles = async (e) => {
+    const files = Array.from(e.target.files || []).filter(f => f.type === 'application/pdf' || /\.pdf$/i.test(f.name));
+    if (files.length === 0) return;
+    setUploading(true);
+    setResult(null);
+
+    let uploaded = 0;
+    const errors = [];
+    for (const file of files) {
+      try {
+        const storagePath = `${Date.now()}-${Math.random().toString(36).slice(2)}.pdf`;
+        const { error: uploadError } = await supabase.storage
+          .from('letters')
+          .upload(storagePath, file, { contentType: 'application/pdf' });
+        if (uploadError) throw uploadError;
+
+        const { data: row, error: insertError } = await supabase
+          .from('letters')
+          .insert({ title: file.name.replace(/\.pdf$/i, ''), file_name: file.name, storage_path: storagePath, file_size: file.size })
+          .select()
+          .single();
+        if (insertError) throw insertError;
+
+        uploaded += 1;
+        // Fire-and-forget: the letter is already saved and viewable either
+        // way, this just fills in full-text search once it finishes.
+        fetch('/api/letters-extract-text', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
+          body: JSON.stringify({ letterId: row.id, storagePath }),
+        }).catch(() => {});
+      } catch (err) {
+        errors.push(`${file.name}: ${err.message}`);
+      }
+    }
+
+    setResult(errors.length > 0
+      ? `Uploaded ${uploaded}, ${errors.length} failed (${errors[0]})`
+      : `Uploaded ${uploaded} letter${uploaded !== 1 ? 's' : ''}`);
+    onDone?.();
+    setUploading(false);
+    if (inputRef.current) inputRef.current.value = '';
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
+      <input ref={inputRef} type="file" accept="application/pdf" multiple style={{ display: 'none' }} onChange={handleFiles} />
+      <button className="btn-primary small" onClick={() => inputRef.current?.click()} disabled={uploading}>
+        <Upload size={14} /> {uploading ? 'Uploading...' : 'Upload Letter(s)'}
+      </button>
+      {result && <p style={{ fontSize: 11, color: 'var(--text-muted)', maxWidth: 220, textAlign: 'right' }}>{result}</p>}
+    </div>
+  );
+}
+
+function LetterViewer({ letter, onSave, onClose, onDelete }) {
+  const [title, setTitle] = useState(letter.title);
+  const [description, setDescription] = useState(letter.description || '');
+  const [tags, setTags] = useState(letter.tags?.join(', ') || '');
+  const [letterDate, setLetterDate] = useState(letter.letter_date || '');
+  const [signedUrl, setSignedUrl] = useState(null);
+  const [previewError, setPreviewError] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    supabase.storage.from('letters').createSignedUrl(letter.storage_path, 3600).then(({ data, error: err }) => {
+      if (cancelled) return;
+      if (data) setSignedUrl(data.signedUrl);
+      if (err) setPreviewError(err.message);
+    });
+    return () => { cancelled = true; };
+  }, [letter.storage_path]);
+
+  const handleSave = async (e) => {
+    e.preventDefault();
+    setSaving(true);
+    setError('');
+    try {
+      const { error: err } = await supabase.from('letters').update({
+        title: title.trim() || letter.file_name,
+        description: description.trim() || null,
+        tags: tags.trim() ? tags.split(',').map(t => t.trim()).filter(Boolean) : [],
+        letter_date: letterDate || null,
+      }).eq('id', letter.id);
+      if (err) throw err;
+      onSave();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="letter-viewer">
+      <div className="letter-viewer-pdf">
+        {previewError ? (
+          <div className="empty-state"><AlertCircle size={32} /><p>{previewError}</p></div>
+        ) : signedUrl ? (
+          <iframe src={signedUrl} title={letter.title} className="letter-pdf-frame" />
+        ) : (
+          <div className="loading">Loading PDF…</div>
+        )}
+      </div>
+      <form onSubmit={handleSave} className="form">
+        {error && <div className="error-msg"><AlertCircle size={14} /> {error}</div>}
+        <div className="form-row">
+          <label>Title</label>
+          <input value={title} onChange={e => setTitle(e.target.value)} />
+        </div>
+        <div className="form-row-split">
+          <div className="form-row">
+            <label>Date on letter (optional)</label>
+            <input type="date" value={letterDate} onChange={e => setLetterDate(e.target.value)} />
+          </div>
+          <div className="form-row">
+            <label>Tags (comma-separated)</label>
+            <input value={tags} onChange={e => setTags(e.target.value)} placeholder="e.g. meetings, finance" />
+          </div>
+        </div>
+        <div className="form-row">
+          <label>Description (optional)</label>
+          <textarea value={description} onChange={e => setDescription(e.target.value)} rows={3}
+            placeholder="A short note on what this letter covers" />
+        </div>
+        <div className="form-actions">
+          <button type="button" className="btn-danger" style={{ marginRight: 'auto' }} onClick={() => onDelete(letter)}>
+            <Trash2 size={14} />
+          </button>
+          {signedUrl && (
+            <a className="btn-secondary" href={signedUrl} target="_blank" rel="noreferrer">Open in New Tab</a>
+          )}
+          <button type="button" className="btn-secondary" onClick={onClose}>Close</button>
+          <button type="submit" className="btn-primary" disabled={saving}>{saving ? 'Saving...' : 'Save'}</button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function LettersView() {
+  const [letters, setLetters] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
+  const [tagFilter, setTagFilter] = useState('all');
+  const [tags, setTags] = useState([]);
+  const [viewingLetter, setViewingLetter] = useState(null);
+  const [confirmDelete, setConfirmDelete] = useState(null);
+
+  const loadLetters = useCallback(async () => {
+    setLoading(true);
+    const { data } = await supabase.from('letters').select('*').order('created_at', { ascending: false });
+    if (data) {
+      setLetters(data);
+      setTags([...new Set(data.flatMap(l => l.tags || []))].sort());
+    }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { loadLetters(); }, [loadLetters]);
+
+  const handleDelete = async (letter) => {
+    await supabase.storage.from('letters').remove([letter.storage_path]);
+    await supabase.from('letters').delete().eq('id', letter.id);
+    setLetters(prev => prev.filter(l => l.id !== letter.id));
+    setConfirmDelete(null);
+  };
+
+  const filtered = letters.filter(l => {
+    const q = search.toLowerCase();
+    const matchSearch = !search ||
+      l.title?.toLowerCase().includes(q) ||
+      l.description?.toLowerCase().includes(q) ||
+      l.content?.toLowerCase().includes(q);
+    const matchTag = tagFilter === 'all' || (l.tags || []).includes(tagFilter);
+    return matchSearch && matchTag;
+  });
+
+  return (
+    <>
+      <div className="filters-bar">
+        <div className="search-wrap">
+          <Search size={16} className="search-icon" />
+          <input className="search-input" placeholder="Search letters..." value={search} onChange={e => setSearch(e.target.value)} />
+          {search && <button className="icon-btn small" onClick={() => setSearch('')}><X size={14} /></button>}
+        </div>
+        {tags.length > 0 && (
+          <select className="filter-select" value={tagFilter} onChange={e => setTagFilter(e.target.value)}>
+            <option value="all">All Tags</option>
+            {tags.map(t => <option key={t} value={t}>{t}</option>)}
+          </select>
+        )}
+        <LetterUploadButton onDone={loadLetters} />
+      </div>
+      <main className="contacts-list">
+        {loading ? (
+          <div className="loading">Loading letters...</div>
+        ) : filtered.length === 0 ? (
+          <div className="empty-state">
+            <FileText size={48} />
+            <h3>{letters.length === 0 ? 'No letters yet' : 'No results found'}</h3>
+            <p>{letters.length === 0
+              ? 'Upload a PDF of a letter or instructions from the jw.org hub to get started.'
+              : 'Try a different search or tag.'}</p>
+          </div>
+        ) : (
+          <div className="visits-list">
+            {filtered.map(l => <LetterCard key={l.id} letter={l} onClick={() => setViewingLetter(l)} />)}
+          </div>
+        )}
+      </main>
+
+      {viewingLetter && (
+        <Modal title={viewingLetter.title} onClose={() => setViewingLetter(null)} wide>
+          <LetterViewer
+            letter={viewingLetter}
+            onSave={() => { setViewingLetter(null); loadLetters(); }}
+            onClose={() => setViewingLetter(null)}
+            onDelete={(letter) => { setViewingLetter(null); setConfirmDelete(letter); }}
+          />
+        </Modal>
+      )}
+
+      {confirmDelete && (
+        <Modal title="Confirm Delete" onClose={() => setConfirmDelete(null)}>
+          <div className="form">
+            <p style={{ marginBottom: 16 }}>Delete "{confirmDelete.title}"? This cannot be undone.</p>
+            <div className="form-actions">
+              <button className="btn-secondary" onClick={() => setConfirmDelete(null)}>Cancel</button>
+              <button className="btn-danger" onClick={() => handleDelete(confirmDelete)}>Delete</button>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </>
+  );
+}
+
 function formatAnswer(text) {
   const urlRegex = /(https?:\/\/wol\.jw\.org[^\s)]+)/g;
   const linked = text.replace(urlRegex, (url) => {
@@ -1916,6 +2186,7 @@ function MinistryTracker() {
         <button className={`tab-btn ${tab === 'studyLog' ? 'active' : ''}`} onClick={() => setTab('studyLog')}>Study Log</button>
         <button className={`tab-btn ${tab === 'studyNotes' ? 'active' : ''}`} onClick={() => setTab('studyNotes')}>Study Notes</button>
         <button className={`tab-btn ${tab === 'notes' ? 'active' : ''}`} onClick={() => setTab('notes')}>Notes</button>
+        <button className={`tab-btn ${tab === 'letters' ? 'active' : ''}`} onClick={() => setTab('letters')}>Letters</button>
         <button className={`tab-btn ${tab === 'search' ? 'active' : ''}`} onClick={() => setTab('search')}>Search</button>
         <button className={`tab-btn ${tab === 'trades' ? 'active' : ''}`} onClick={() => setTab('trades')}>Trades</button>
       </div>
@@ -1976,6 +2247,7 @@ function MinistryTracker() {
           onHighlighted={() => setHighlightNote(null)}
         />
       )}
+      {tab === 'letters' && <LettersView />}
       {tab === 'search' && (
         <SearchView onNavigateToNote={handleNavigateToNote} />
       )}
