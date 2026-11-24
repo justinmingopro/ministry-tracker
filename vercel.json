@@ -1,7 +1,8 @@
 {
   "functions": {
     "api/search.js": { "maxDuration": 300 },
-    "api/jwlibrary-import.js": { "maxDuration": 300 }
+    "api/jwlibrary-import.js": { "maxDuration": 300 },
+    "api/letters-extract-text.js": { "maxDuration": 60 }
   },
   "crons": [
     { "path": "/api/jwlibrary-import", "schedule": "0 15 * * *" }
