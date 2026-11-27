@@ -247,6 +247,11 @@ body {
   overflow-y: auto;
   max-height: 140px;
   padding: 2px 0;
+  /* Safety net: if anything (including a browser's own "keep the focused
+     input visible" behavior) ever scrolls this into view, don't let it
+     land underneath the sticky header — generous on purpose, since the
+     header's own height varies (it wraps to two rows on narrow screens). */
+  scroll-margin-top: 110px;
 }
 
 .followup-textarea::placeholder { color: var(--text-muted); }

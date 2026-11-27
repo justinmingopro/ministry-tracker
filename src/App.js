@@ -1451,12 +1451,27 @@ function NoteReferenceChips({ references, onNavigateToNote }) {
 
 function FollowUpInput({ value, onChange, onSubmit, disabled }) {
   const taRef = useRef(null);
+  const prevValueRef = useRef(value);
 
+  // Auto-grows the box as you type. Resetting height to 'auto' before
+  // remeasuring is only actually needed to detect a *shrink* (deleted
+  // text) — scrollHeight already reflects overflow correctly while
+  // growing, without that reset. Skipping it while typing forward (the
+  // overwhelmingly common case) avoids forcing a shrink-then-grow reflow
+  // on every keystroke, which was fighting with mobile Safari's "keep the
+  // focused input visible" behavior and scrolling this box up behind the
+  // sticky header as soon as you started typing.
   useEffect(() => {
     const ta = taRef.current;
+    const grew = value.length >= prevValueRef.current.length;
+    prevValueRef.current = value;
     if (!ta) return;
-    ta.style.height = 'auto';
-    ta.style.height = `${ta.scrollHeight}px`;
+    if (grew) {
+      if (ta.scrollHeight > ta.clientHeight) ta.style.height = `${ta.scrollHeight}px`;
+    } else {
+      ta.style.height = 'auto';
+      ta.style.height = `${ta.scrollHeight}px`;
+    }
   }, [value]);
 
   return (
@@ -1544,7 +1559,22 @@ function AIAnswerCard({ question, resumeSession, onResumed, onNavigateToNote }) 
     setStatus('loading');
     setError('');
     try {
-      const { answer: rawA, references } = await callResearchAPI(q, thread);
+      let result;
+      try {
+        result = await callResearchAPI(q, thread);
+      } catch (err) {
+        // A dropped connection (mobile network blip, backgrounded tab) throws
+        // a TypeError from fetch itself ("Load failed" / "Failed to fetch"),
+        // distinct from an Error we throw for a server-reported failure.
+        // That's transient, so give it one automatic retry before giving up.
+        if (err instanceof TypeError) {
+          await new Promise((r) => setTimeout(r, 1000));
+          result = await callResearchAPI(q, thread);
+        } else {
+          throw err;
+        }
+      }
+      const { answer: rawA, references } = result;
       const newThread = [...thread, { q, rawA, htmlA: formatAnswer(rawA), references }];
       setThread(newThread);
       setStatus('done');
@@ -1559,6 +1589,8 @@ function AIAnswerCard({ question, resumeSession, onResumed, onNavigateToNote }) 
         if (saveErr) console.warn('Failed to update research session:', saveErr);
       }
     } catch (err) {
+      // Restore the question so the user doesn't have to retype it to try again.
+      setFollowUp(q);
       setError(err.message);
       setStatus('error');
     }
