@@ -1397,7 +1397,7 @@ function formatAnswer(text) {
     .join('');
 }
 
-async function callResearchAPI(question, thread) {
+async function callResearchAPI(question, thread, onDelta) {
   const res = await fetch('/api/search', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
@@ -1407,12 +1407,21 @@ async function callResearchAPI(question, thread) {
     }),
   });
 
-  // The server streams blank-line heartbeats to keep the connection alive
-  // during long searches, then writes one JSON line as the real payload.
+  // The server streams the answer as it's generated (type: "delta") to keep
+  // real data flowing over a long search instead of relying on silence +
+  // occasional heartbeats, plus blank-line heartbeats for stretches with no
+  // text yet, then one final "done" line with the full payload.
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
-  let data = null;
+  let result = null;
+
+  const handleLine = (line) => {
+    if (!line.trim()) return;
+    const parsed = JSON.parse(line);
+    if (parsed.type === 'delta') onDelta?.(parsed.text);
+    else result = parsed;
+  };
 
   while (true) {
     const { done, value } = await reader.read();
@@ -1420,14 +1429,12 @@ async function callResearchAPI(question, thread) {
     buffer += decoder.decode(value, { stream: true });
     const lines = buffer.split('\n');
     buffer = lines.pop();
-    for (const line of lines) {
-      if (line.trim()) data = JSON.parse(line);
-    }
+    for (const line of lines) handleLine(line);
   }
-  if (!data && buffer.trim()) data = JSON.parse(buffer);
-  if (!data) throw new Error('No response received');
-  if (data.error) throw new Error(data.error);
-  return { answer: data.answer, references: data.references || [] };
+  if (buffer.trim()) handleLine(buffer);
+  if (!result) throw new Error('No response received');
+  if (result.error) throw new Error(result.error);
+  return { answer: result.answer, references: result.references || [] };
 }
 
 function NoteReferenceChips({ references, onNavigateToNote }) {
@@ -1496,6 +1503,7 @@ function AIAnswerCard({ question, resumeSession, onResumed, onNavigateToNote }) 
   const [pendingQuestion, setPendingQuestion] = useState('');
   const [status, setStatus] = useState('idle'); // idle | loading | done | error
   const [error, setError] = useState('');
+  const [partialAnswer, setPartialAnswer] = useState('');
   const [isResumed, setIsResumed] = useState(false);
   const askedFor = useRef(null);
   const resumedFor = useRef(null);
@@ -1510,7 +1518,8 @@ function AIAnswerCard({ question, resumeSession, onResumed, onNavigateToNote }) 
     setPendingQuestion(question);
     setStatus('loading');
     setError('');
-    callResearchAPI(question, [])
+    setPartialAnswer('');
+    callResearchAPI(question, [], (delta) => setPartialAnswer((p) => p + delta))
       .then(async ({ answer: rawA, references }) => {
         setThread([{ q: question, rawA, htmlA: formatAnswer(rawA), references }]);
         setStatus('done');
@@ -1558,10 +1567,12 @@ function AIAnswerCard({ question, resumeSession, onResumed, onNavigateToNote }) 
     setPendingQuestion(q);
     setStatus('loading');
     setError('');
+    setPartialAnswer('');
+    const onDelta = (delta) => setPartialAnswer((p) => p + delta);
     try {
       let result;
       try {
-        result = await callResearchAPI(q, thread);
+        result = await callResearchAPI(q, thread, onDelta);
       } catch (err) {
         // A dropped connection (mobile network blip, backgrounded tab) throws
         // a TypeError from fetch itself ("Load failed" / "Failed to fetch"),
@@ -1569,7 +1580,8 @@ function AIAnswerCard({ question, resumeSession, onResumed, onNavigateToNote }) 
         // That's transient, so give it one automatic retry before giving up.
         if (err instanceof TypeError) {
           await new Promise((r) => setTimeout(r, 1000));
-          result = await callResearchAPI(q, thread);
+          setPartialAnswer('');
+          result = await callResearchAPI(q, thread, onDelta);
         } else {
           throw err;
         }
@@ -1618,7 +1630,11 @@ function AIAnswerCard({ question, resumeSession, onResumed, onNavigateToNote }) 
           {thread.length > 0 && (
             <div style={{ fontSize: 13, color: 'var(--text-muted)', fontStyle: 'italic', margin: '14px 0 6px', paddingTop: 14, borderTop: '1px solid var(--border)' }}>↪ {pendingQuestion}</div>
           )}
-          <div className="loading" style={{ padding: '8px 0' }}>Researching wol.jw.org and your notes...</div>
+          {partialAnswer ? (
+            <div className="ai-answer-body" dangerouslySetInnerHTML={{ __html: formatAnswer(partialAnswer) }} />
+          ) : (
+            <div className="loading" style={{ padding: '8px 0' }}>Researching wol.jw.org and your notes...</div>
+          )}
         </>
       )}
       {status === 'error' && (

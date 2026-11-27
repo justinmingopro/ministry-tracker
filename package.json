@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "dependencies": {
+    "@anthropic-ai/sdk": "^1.14.0",
     "@supabase/supabase-js": "^2.39.0",
     "@tiptap/extension-highlight": "^2.27.3",
     "@tiptap/extension-link": "^2.27.3",

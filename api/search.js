@@ -3,6 +3,7 @@
 // user's own personal notes (study_notes + bear_notes), so the answer can
 // draw on both and say clearly which is which.
 import { createClient } from '@supabase/supabase-js';
+import Anthropic from '@anthropic-ai/sdk';
 
 const STOPWORDS = new Set([
   'the', 'a', 'an', 'and', 'or', 'of', 'to', 'in', 'on', 'for', 'is', 'are',
@@ -161,17 +162,25 @@ ${notesContext ? `\nPERSONAL NOTES that may be relevant to this question:\n\n${n
   messages.push({ role: 'user', content: question });
 
   // Stream newline-delimited output so the connection stays active during
-  // long searches — a fully silent multi-second request can get dropped by
-  // mobile networks/proxies as "idle" even though the function is still
-  // working. Heartbeats keep data flowing until the real payload (the final
-  // line) is ready.
+  // long searches. A follow-up (more context, more search turns) can take
+  // long enough that a fully silent connection — even one with occasional
+  // blank-line heartbeats — risks getting dropped as idle by a mobile
+  // network or an intermediate proxy that only recognizes real payload
+  // bytes as activity. Streaming Claude's actual answer text through as it's
+  // generated keeps genuine data flowing continuously instead, which is a
+  // stronger guarantee than a heartbeat and also lets the client show the
+  // answer appearing live. The heartbeat stays as a secondary safety net for
+  // the stretches (e.g. while a search is running) where no text is being
+  // generated yet.
   res.writeHead(200, { 'Content-Type': 'application/x-ndjson' });
   const heartbeat = setInterval(() => res.write('\n'), 10000);
   const finish = (payload) => {
     clearInterval(heartbeat);
-    res.write(JSON.stringify(payload) + '\n');
+    res.write(JSON.stringify({ type: 'done', ...payload }) + '\n');
     res.end();
   };
+
+  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
   try {
     // Agentic loop — keep going until Claude stops using tools. Capped so a
@@ -179,35 +188,30 @@ ${notesContext ? `\nPERSONAL NOTES that may be relevant to this question:\n\n${n
     // function's time budget.
     const MAX_TURNS = 8;
     for (let turn = 0; turn < MAX_TURNS; turn++) {
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': process.env.ANTHROPIC_API_KEY,
-          'anthropic-version': '2023-06-01',
-        },
-        body: JSON.stringify({
-          model: 'claude-sonnet-5',
-          max_tokens: 4096,
-          system: SYSTEM_PROMPT,
-          tools: [{
-            type: 'web_search_20250305',
-            name: 'web_search',
-            max_uses: 5,
-            allowed_domains: ['wol.jw.org'],
-          }],
-          messages,
-        }),
+      const stream = anthropic.messages.stream({
+        model: 'claude-sonnet-5',
+        max_tokens: 4096,
+        system: SYSTEM_PROMPT,
+        tools: [{
+          type: 'web_search_20250305',
+          name: 'web_search',
+          max_uses: 5,
+          allowed_domains: ['wol.jw.org'],
+        }],
+        messages,
       });
 
-      const data = await response.json();
+      for await (const event of stream) {
+        if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
+          res.write(JSON.stringify({ type: 'delta', text: event.delta.text }) + '\n');
+        }
+      }
 
-      if (data.error) throw new Error(data.error.message);
+      const message = await stream.finalMessage();
+      messages.push({ role: 'assistant', content: message.content });
 
-      messages.push({ role: 'assistant', content: data.content });
-
-      if (data.stop_reason === 'end_turn' || data.stop_reason === 'max_tokens') {
-        const rawAnswer = data.content
+      if (message.stop_reason === 'end_turn' || message.stop_reason === 'max_tokens') {
+        const rawAnswer = message.content
           .filter((b) => b.type === 'text')
           .map((b) => b.text)
           .join('\n')
@@ -217,15 +221,15 @@ ${notesContext ? `\nPERSONAL NOTES that may be relevant to this question:\n\n${n
           const { cleaned, references } = extractNoteReferences(rawAnswer, notes);
           return finish({ answer: cleaned, references });
         }
-        throw new Error(`No answer text returned (stop_reason: ${data.stop_reason})`);
+        throw new Error(`No answer text returned (stop_reason: ${message.stop_reason})`);
       }
 
       // Server-executed tool (web_search) needs another turn to continue —
       // the assistant content is already appended above, just call again.
-      if (data.stop_reason === 'pause_turn') continue;
+      if (message.stop_reason === 'pause_turn') continue;
 
-      if (data.stop_reason === 'tool_use') {
-        const toolResults = data.content
+      if (message.stop_reason === 'tool_use') {
+        const toolResults = message.content
           .filter((b) => b.type === 'tool_use')
           .map((b) => ({
             type: 'tool_result',
@@ -239,7 +243,7 @@ ${notesContext ? `\nPERSONAL NOTES that may be relevant to this question:\n\n${n
         continue;
       }
 
-      throw new Error(`Unexpected stop_reason: ${data.stop_reason}`);
+      throw new Error(`Unexpected stop_reason: ${message.stop_reason}`);
     }
 
     throw new Error(`Search took too many turns (limit: ${MAX_TURNS})`);
