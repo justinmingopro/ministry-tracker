@@ -1559,7 +1559,22 @@ function AIAnswerCard({ question, resumeSession, onResumed, onNavigateToNote }) 
     setStatus('loading');
     setError('');
     try {
-      const { answer: rawA, references } = await callResearchAPI(q, thread);
+      let result;
+      try {
+        result = await callResearchAPI(q, thread);
+      } catch (err) {
+        // A dropped connection (mobile network blip, backgrounded tab) throws
+        // a TypeError from fetch itself ("Load failed" / "Failed to fetch"),
+        // distinct from an Error we throw for a server-reported failure.
+        // That's transient, so give it one automatic retry before giving up.
+        if (err instanceof TypeError) {
+          await new Promise((r) => setTimeout(r, 1000));
+          result = await callResearchAPI(q, thread);
+        } else {
+          throw err;
+        }
+      }
+      const { answer: rawA, references } = result;
       const newThread = [...thread, { q, rawA, htmlA: formatAnswer(rawA), references }];
       setThread(newThread);
       setStatus('done');
@@ -1574,6 +1589,8 @@ function AIAnswerCard({ question, resumeSession, onResumed, onNavigateToNote }) 
         if (saveErr) console.warn('Failed to update research session:', saveErr);
       }
     } catch (err) {
+      // Restore the question so the user doesn't have to retype it to try again.
+      setFollowUp(q);
       setError(err.message);
       setStatus('error');
     }
