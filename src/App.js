@@ -1451,12 +1451,27 @@ function NoteReferenceChips({ references, onNavigateToNote }) {
 
 function FollowUpInput({ value, onChange, onSubmit, disabled }) {
   const taRef = useRef(null);
+  const prevValueRef = useRef(value);
 
+  // Auto-grows the box as you type. Resetting height to 'auto' before
+  // remeasuring is only actually needed to detect a *shrink* (deleted
+  // text) — scrollHeight already reflects overflow correctly while
+  // growing, without that reset. Skipping it while typing forward (the
+  // overwhelmingly common case) avoids forcing a shrink-then-grow reflow
+  // on every keystroke, which was fighting with mobile Safari's "keep the
+  // focused input visible" behavior and scrolling this box up behind the
+  // sticky header as soon as you started typing.
   useEffect(() => {
     const ta = taRef.current;
+    const grew = value.length >= prevValueRef.current.length;
+    prevValueRef.current = value;
     if (!ta) return;
-    ta.style.height = 'auto';
-    ta.style.height = `${ta.scrollHeight}px`;
+    if (grew) {
+      if (ta.scrollHeight > ta.clientHeight) ta.style.height = `${ta.scrollHeight}px`;
+    } else {
+      ta.style.height = 'auto';
+      ta.style.height = `${ta.scrollHeight}px`;
+    }
   }, [value]);
 
   return (
