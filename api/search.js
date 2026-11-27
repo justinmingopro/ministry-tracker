@@ -90,8 +90,8 @@ function extractNoteReferences(answer, notes) {
 // key) — required both so this doesn't run up API costs for randoms who find
 // the URL, and because RLS on study_notes/bear_notes means an unauthenticated
 // request would see no notes anyway.
-async function requireUser(req) {
-  const auth = req.headers.authorization || '';
+async function requireUser(request) {
+  const auth = request.headers.get('authorization') || '';
   const token = auth.startsWith('Bearer ') ? auth.slice(7) : null;
   if (!token) return null;
   const anon = createClient(process.env.REACT_APP_SUPABASE_URL, process.env.REACT_APP_SUPABASE_ANON_KEY);
@@ -100,33 +100,47 @@ async function requireUser(req) {
   return token;
 }
 
-export default async function handler(req, res) {
-  if (req.method !== 'POST') return res.status(405).end();
+// Exported as a Fetch API handler (fetch(request) -> Response), not the
+// classic (req, res) => res.write(...) signature — the latter buffers the
+// whole response on Vercel's Node runtime and only flushes it once the
+// function returns, regardless of how many times you call res.write().
+// Every genuine-streaming example in Vercel's own docs uses a Response built
+// from a ReadableStream, which is what this needs to actually keep a long
+// search's connection alive with real bytes instead of silently buffering.
+export default {
+  async fetch(request) {
+    if (request.method !== 'POST') return new Response(null, { status: 405 });
 
-  const { question, thread = [] } = req.body || {};
-  if (!question) return res.status(400).json({ error: 'No question provided' });
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
+    }
+    const { question, thread = [] } = body || {};
+    if (!question) return Response.json({ error: 'No question provided' }, { status: 400 });
 
-  const userToken = await requireUser(req);
-  if (!userToken) return res.status(401).json({ error: 'Unauthorized' });
+    const userToken = await requireUser(request);
+    if (!userToken) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const supabaseUrl = process.env.REACT_APP_SUPABASE_URL;
-  const supabaseKey = process.env.REACT_APP_SUPABASE_ANON_KEY;
-  // Forward the caller's own session so Postgrest/RLS sees this as an
-  // authenticated request, rather than reaching for a service-role key for
-  // what's just a read on the logged-in user's own notes.
-  const supabase = supabaseUrl && supabaseKey
-    ? createClient(supabaseUrl, supabaseKey, { global: { headers: { Authorization: `Bearer ${userToken}` } } })
-    : null;
+    const supabaseUrl = process.env.REACT_APP_SUPABASE_URL;
+    const supabaseKey = process.env.REACT_APP_SUPABASE_ANON_KEY;
+    // Forward the caller's own session so Postgrest/RLS sees this as an
+    // authenticated request, rather than reaching for a service-role key for
+    // what's just a read on the logged-in user's own notes.
+    const supabase = supabaseUrl && supabaseKey
+      ? createClient(supabaseUrl, supabaseKey, { global: { headers: { Authorization: `Bearer ${userToken}` } } })
+      : null;
 
-  let notes = [];
-  try {
-    if (supabase) notes = await findRelevantNotes(supabase, question);
-  } catch (err) {
-    console.error('Notes lookup failed (continuing with wol.jw.org only):', err);
-  }
-  const notesContext = buildNotesContext(notes);
+    let notes = [];
+    try {
+      if (supabase) notes = await findRelevantNotes(supabase, question);
+    } catch (err) {
+      console.error('Notes lookup failed (continuing with wol.jw.org only):', err);
+    }
+    const notesContext = buildNotesContext(notes);
 
-  const SYSTEM_PROMPT = `You are a research assistant for a Jehovah's Witness doing ministry and
+    const SYSTEM_PROMPT = `You are a research assistant for a Jehovah's Witness doing ministry and
 personal Bible study. Answer questions using up to two sources:
 
 1. wol.jw.org (the Watchtower Online Library) — use the web_search tool, and ONLY search
@@ -154,101 +168,112 @@ RULES:
 6. Write in clear paragraphs. No markdown headers or bullet symbols.
 ${notesContext ? `\nPERSONAL NOTES that may be relevant to this question:\n\n${notesContext}` : ''}`;
 
-  const messages = [];
-  for (const turn of thread) {
-    messages.push({ role: 'user', content: turn.q });
-    messages.push({ role: 'assistant', content: [{ type: 'text', text: turn.a }] });
-  }
-  messages.push({ role: 'user', content: question });
-
-  // Stream newline-delimited output so the connection stays active during
-  // long searches. A follow-up (more context, more search turns) can take
-  // long enough that a fully silent connection — even one with occasional
-  // blank-line heartbeats — risks getting dropped as idle by a mobile
-  // network or an intermediate proxy that only recognizes real payload
-  // bytes as activity. Streaming Claude's actual answer text through as it's
-  // generated keeps genuine data flowing continuously instead, which is a
-  // stronger guarantee than a heartbeat and also lets the client show the
-  // answer appearing live. The heartbeat stays as a secondary safety net for
-  // the stretches (e.g. while a search is running) where no text is being
-  // generated yet.
-  res.writeHead(200, { 'Content-Type': 'application/x-ndjson' });
-  const heartbeat = setInterval(() => res.write('\n'), 10000);
-  const finish = (payload) => {
-    clearInterval(heartbeat);
-    res.write(JSON.stringify({ type: 'done', ...payload }) + '\n');
-    res.end();
-  };
-
-  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-
-  try {
-    // Agentic loop — keep going until Claude stops using tools. Capped so a
-    // stuck pause_turn/tool_use cycle can't run indefinitely within the
-    // function's time budget.
-    const MAX_TURNS = 8;
-    for (let turn = 0; turn < MAX_TURNS; turn++) {
-      const stream = anthropic.messages.stream({
-        model: 'claude-sonnet-5',
-        max_tokens: 4096,
-        system: SYSTEM_PROMPT,
-        tools: [{
-          type: 'web_search_20250305',
-          name: 'web_search',
-          max_uses: 5,
-          allowed_domains: ['wol.jw.org'],
-        }],
-        messages,
-      });
-
-      for await (const event of stream) {
-        if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
-          res.write(JSON.stringify({ type: 'delta', text: event.delta.text }) + '\n');
-        }
-      }
-
-      const message = await stream.finalMessage();
-      messages.push({ role: 'assistant', content: message.content });
-
-      if (message.stop_reason === 'end_turn' || message.stop_reason === 'max_tokens') {
-        const rawAnswer = message.content
-          .filter((b) => b.type === 'text')
-          .map((b) => b.text)
-          .join('\n')
-          .trim();
-
-        if (rawAnswer) {
-          const { cleaned, references } = extractNoteReferences(rawAnswer, notes);
-          return finish({ answer: cleaned, references });
-        }
-        throw new Error(`No answer text returned (stop_reason: ${message.stop_reason})`);
-      }
-
-      // Server-executed tool (web_search) needs another turn to continue —
-      // the assistant content is already appended above, just call again.
-      if (message.stop_reason === 'pause_turn') continue;
-
-      if (message.stop_reason === 'tool_use') {
-        const toolResults = message.content
-          .filter((b) => b.type === 'tool_use')
-          .map((b) => ({
-            type: 'tool_result',
-            tool_use_id: b.id,
-            content: b.input?.query
-              ? `Search performed for: ${b.input.query}`
-              : 'Search completed',
-          }));
-
-        messages.push({ role: 'user', content: toolResults });
-        continue;
-      }
-
-      throw new Error(`Unexpected stop_reason: ${message.stop_reason}`);
+    const messages = [];
+    for (const turn of thread) {
+      messages.push({ role: 'user', content: turn.q });
+      messages.push({ role: 'assistant', content: [{ type: 'text', text: turn.a }] });
     }
+    messages.push({ role: 'user', content: question });
 
-    throw new Error(`Search took too many turns (limit: ${MAX_TURNS})`);
-  } catch (err) {
-    console.error('Research assistant error:', err);
-    finish({ error: err.message });
-  }
-}
+    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const encoder = new TextEncoder();
+
+    // Stream newline-delimited output so the connection stays active during
+    // long searches. A follow-up (more context, more search turns) can take
+    // long enough that a fully silent connection risks getting dropped as
+    // idle by a mobile network or an intermediate proxy. Streaming Claude's
+    // actual answer text through as it's generated keeps genuine data
+    // flowing continuously, and also lets the client show the answer
+    // appearing live. A heartbeat stays as a secondary safety net for the
+    // stretches (e.g. while a search is running) where no text is being
+    // generated yet.
+    let heartbeat;
+    const responseStream = new ReadableStream({
+      async start(controller) {
+        heartbeat = setInterval(() => controller.enqueue(encoder.encode('\n')), 10000);
+        const finish = (payload) => {
+          clearInterval(heartbeat);
+          controller.enqueue(encoder.encode(JSON.stringify({ type: 'done', ...payload }) + '\n'));
+          controller.close();
+        };
+
+        try {
+          // Agentic loop — keep going until Claude stops using tools.
+          // Capped so a stuck pause_turn/tool_use cycle can't run
+          // indefinitely within the function's time budget.
+          const MAX_TURNS = 8;
+          for (let turn = 0; turn < MAX_TURNS; turn++) {
+            const stream = anthropic.messages.stream({
+              model: 'claude-sonnet-5',
+              max_tokens: 4096,
+              system: SYSTEM_PROMPT,
+              tools: [{
+                type: 'web_search_20250305',
+                name: 'web_search',
+                max_uses: 5,
+                allowed_domains: ['wol.jw.org'],
+              }],
+              messages,
+            });
+
+            for await (const event of stream) {
+              if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
+                controller.enqueue(encoder.encode(JSON.stringify({ type: 'delta', text: event.delta.text }) + '\n'));
+              }
+            }
+
+            const message = await stream.finalMessage();
+            messages.push({ role: 'assistant', content: message.content });
+
+            if (message.stop_reason === 'end_turn' || message.stop_reason === 'max_tokens') {
+              const rawAnswer = message.content
+                .filter((b) => b.type === 'text')
+                .map((b) => b.text)
+                .join('\n')
+                .trim();
+
+              if (rawAnswer) {
+                const { cleaned, references } = extractNoteReferences(rawAnswer, notes);
+                finish({ answer: cleaned, references });
+                return;
+              }
+              throw new Error(`No answer text returned (stop_reason: ${message.stop_reason})`);
+            }
+
+            // Server-executed tool (web_search) needs another turn to
+            // continue — the assistant content is already appended above,
+            // just call again.
+            if (message.stop_reason === 'pause_turn') continue;
+
+            if (message.stop_reason === 'tool_use') {
+              const toolResults = message.content
+                .filter((b) => b.type === 'tool_use')
+                .map((b) => ({
+                  type: 'tool_result',
+                  tool_use_id: b.id,
+                  content: b.input?.query
+                    ? `Search performed for: ${b.input.query}`
+                    : 'Search completed',
+                }));
+
+              messages.push({ role: 'user', content: toolResults });
+              continue;
+            }
+
+            throw new Error(`Unexpected stop_reason: ${message.stop_reason}`);
+          }
+
+          throw new Error(`Search took too many turns (limit: ${MAX_TURNS})`);
+        } catch (err) {
+          console.error('Research assistant error:', err);
+          finish({ error: err.message });
+        }
+      },
+      cancel() {
+        clearInterval(heartbeat);
+      },
+    });
+
+    return new Response(responseStream, { headers: { 'Content-Type': 'application/x-ndjson' } });
+  },
+};
